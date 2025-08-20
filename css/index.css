@@ -1,9 +1,9 @@
 :root {
-    --primary-color: #ff0000;
+    --primary-color: #021fc4e0;
     --secondary-color: #ffffff;
-    --accent-color: #b30000;
+    --accent-color: #000e91;
     --text-color: #333333;
-    --light-gray: #f5f5f5;
+    --light-gray: #bfc3c9;
     --gray: #dddddd;
     --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     --transition: all 0.3s ease;
@@ -136,7 +136,7 @@ header {
 }
 
 .hero {
-    height: 80vh;
+    height: 55vh;
     position: relative;
     overflow: hidden;
 }
@@ -153,7 +153,7 @@ header {
 }
 
 .image-container.left {
-    background: url('https://images.unsplash.com/photo-1521737852567-6949f3f9f2b5?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80');
+    background: url('https://images.unsplash.com/photo-1531297484001-80022131f5a1?q=80&w=1120&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D');
     background-size: cover;
     background-position: center;
     clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
@@ -167,11 +167,11 @@ header {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(255, 0, 0, 0.22);
+    background-color: rgba(0, 17, 255, 0.22);
 }
 
 .image-container.right {
-    background: url('https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80');
+    background: url('https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?q=80&w=1470&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D');
     background-size: cover;
     background-position: center;
     clip-path: polygon(15% 0, 100% 0, 100% 100%, 0 100%);
@@ -186,7 +186,7 @@ header {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(255, 0, 0, 0.22);
+    background-color: rgba(17, 0, 255, 0.22);
 }
 
 .image-content {
@@ -422,17 +422,21 @@ p {
 }
 
 .accordion-item {
-    margin-bottom: 1rem;
-    border: 1px solid var(--gray);
-    border-radius: 8px;
-    overflow: hidden;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  box-sizing: border-box;
 }
 
 .accordion-header {
-    padding: 1rem;
-    background-color: var(--light-gray);
-    font-weight: bold;
-    cursor: pointer;
+  display: block;          /* clave */
+  width: 100%;             /* clave */
+  text-align: left;
+  border: 0;               /* quita borde nativo del button */
+  background: var(--light-gray);
+  padding: 1rem;
+  box-sizing: border-box;  /* incluye padding en el ancho */
 }
 
 .accordion-content {
@@ -509,6 +513,7 @@ select:focus {
     background-color: var(--accent-color);
 }
 
+
 .service-section {
     position: relative;
     overflow: hidden;
@@ -564,6 +569,15 @@ select:focus {
     border-color: transparent var(--primary-color) transparent transparent;
 }
 
+.service-card::after{
+  content: "";
+  position: absolute;
+  inset: 0;                      /* ocupa todo el contenedor */
+  background: var(--primary-color);  /* azul detrás del flip */
+  border-radius: inherit;
+  z-index: 0;                    /* por detrás de las caras */
+}
+
 .service-card:hover {
     transform: translateY(-10px);
     box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
@@ -588,6 +602,97 @@ select:focus {
     color: var(--text-color);
     line-height: 1.6;
 }
+/* --- Flip card --- */
+.service-card{
+  perspective: 1000px;        /* profundidad 3D */
+  height: 300px;               /* fija la altura para que el slider no salte */
+  padding: 0;                  /* el padding se mueve a las caras para evitar overflow al girar */
+  overflow: visible;           /* deja respirar la sombra de las caras */
+}
+.card-inner{
+  position: relative;
+  z-index: 1;
+  transform-style: preserve-3d;
+}
+.service-card .card-inner{
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform .8s;
+  transform-style: preserve-3d;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+/* Mantén tu efecto de elevar al hover y añade el giro */
+.service-card:hover{
+  transform: translateY(-10px);
+  box-shadow: 0 15px 30px rgba(0,0,0,0.15);
+}
+.service-card:hover .card-inner,
+.service-card.flip .card-inner{   /* .flip se usa en móvil por tap */
+  transform: rotateY(180deg);
+}
+
+/* Caras delantera y trasera */
+.card-face{
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 10px;
+  background-color: var(--secondary-color);
+  border-top: 4px solid var(--primary-color);
+  padding: 2rem;                         /* recupera el padding original */
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 0.75rem;
+  box-sizing: border-box;
+}
+.card-front{
+  z-index: 2;
+}
+.card-back{
+  transform: rotateY(180deg);
+  background: #f8fbff;                   /* leve contraste en la cara trasera */
+  border-top-color: var(--primary-color);
+}
+
+/* Icono y textos dentro de las caras */
+.card-face .service-icon{
+  margin: 0 auto .5rem;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-face h3{
+  color: var(--primary-color);
+  margin: 0;
+  font-size: 1.15rem;
+}
+.card-face p{
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-color);
+  line-height: 1.55;
+}
+
+/* Lista detrás */
+.card-back h4{
+  margin: 0;
+  font-size: 1rem;
+  color: #ffffff;
+}
+.card-back ul{
+  margin: .5rem 0 0 1.2rem;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: .95rem;
+}
+
+
 
 .slider-control {
     position: absolute;
@@ -628,90 +733,93 @@ select:focus {
     }
 }
 
-footer {
-    background-color: var(--primary-color);
-    color: var(--secondary-color);
-    padding: 3rem 5% 1rem;
+/* ===== Paleta del footer (ajústala a tu marca) ===== */
+footer{
+  --footer-bg: #021fc4e0;               
+  --footer-text: #EAF0FF;              /* texto */
+  --footer-muted: #A6B0C6;             /* texto secundario */
+  --footer-accent: var(--primary-color); /* subrayados/detalles */
+  background: var(--footer-bg);
+  color: var(--footer-text);
 }
 
-.footer-content {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 2rem;
-    margin-bottom: 2rem;
+/* ===== Layout ===== */
+.footer-content{
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 16px;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 1.3fr; /* Logo | Enlaces | Contacto | Mapa */
+  gap: 28px;
+  align-items: start;
+  
+}
+@media (max-width: 1024px){
+  .footer-content{ grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 680px){
+  .footer-content{ grid-template-columns: 1fr; }
 }
 
-.footer-logo,
-.footer-links,
-.footer-contact {
-    flex: 1;
-    min-width: 200px;
+/* ===== Marca ===== */
+.footer-logo .logo-container{
+  display:flex; align-items:center; gap:12px;
+}
+.footer-logo .logo-image{ width:48px; height:auto; display:block; }
+.footer-logo .brand{
+  font-weight:800; letter-spacing:.2px; line-height:1.1;
+  color: var(--footer-text);
 }
 
-.footer-map {
-    flex: 2;
-    min-width: 300px;
-}
-
-.map-container {
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-}
-
-.footer-logo {
-    display: flex;
-    align-items: center;
-}
-
-.footer-logo span {
-    margin-left: 10px;
-    font-size: 1.2rem;
-    font-weight: bold;
-}
-
+/* ===== Títulos con barra acento ===== */
 .footer-links h4,
 .footer-contact h4,
-.footer-map h4 {
-    margin-bottom: 1rem;
+.footer-map h4{
+  font-weight:800; margin: 2px 0 12px;
+  position:relative;
+}
+.footer-links h4::after,
+.footer-contact h4::after,
+.footer-map h4::after{
+  content:""; display:block; width:36px; height:3px; border-radius:2px;
+  background: var(--footer-accent); margin-top:6px;
 }
 
-.footer-links ul {
-    list-style: none;
+/* ===== Enlaces ===== */
+.footer-links ul{ list-style:none; margin:0; padding:0; }
+.footer-links li{ margin:10px 0; }
+.footer-links a{
+  color: var(--footer-text); text-decoration:none; opacity:.9;
+  transition: opacity .2s, transform .2s;
 }
+.footer-links a:hover{ opacity:1; transform: translateX(2px); }
 
-.footer-links li {
-    margin-bottom: 0.5rem;
+/* ===== Contacto ===== */
+.footer-contact p{ margin:.4rem 0; color: var(--footer-muted); }
+.footer-contact a{ color: var(--footer-text); text-decoration:none; }
+.footer-contact a:hover{ text-decoration: underline; }
+
+
+
+/* ===== Mapa ===== */
+.footer-map .map-container{
+  border-radius:12px; overflow:hidden;
+  box-shadow: 0 8px 20px rgba(0,0,0,.25);
+  border: 1px solid rgba(255,255,255,.08);
 }
+.footer-map iframe{ display:block; width:100%; height:200px; border:0; }
 
-.footer-links a {
-    color: var(--secondary-color);
-    text-decoration: none;
-    transition: var(--transition);
+/* ===== Franja inferior ===== */
+copyright, .copyright{ /* por si usas <copyright> o .copyright */
+  background: transparent;
 }
-
-.footer-links a:hover {
-    color: var(--gray);
+.copyright{
+  border-top:1px solid rgba(255,255,255,.12);
 }
-
-.copyright {
-    text-align: center;
-    padding-top: 2rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-@media (max-width: 992px) {
-    .footer-map {
-        flex: 100%;
-        order: 1;
-    }
-
-    .footer-logo,
-    .footer-links,
-    .footer-contact {
-        order: 2;
-    }
+.copyright p{
+  max-width:1200px; margin:0 auto; padding:14px 16px;
+  color: var(--footer-muted);
+  font-size:.95rem; text-align:center;
 }
 
 @keyframes pulse {
@@ -801,6 +909,40 @@ footer {
     font-weight: bold;
     margin-right: 0.5rem;
 }
+
+#nosotros{
+  --primary-color: #021fc4e0;   /* <— tu nuevo color */
+}
+/* --- Tabs bar --- */
+.about-tabs{
+  background: var(--primary-color);
+  border-radius: 10px 10px 0 0;
+}
+
+.tab-button{
+  color: rgba(255,255,255,.85);   /* texto claro siempre */
+}
+
+.tab-button.active{
+  /* Antes: background: var(--secondary-color) (blanco) */
+  background: rgba(255,255,255,.18);  /* resalta sin volverse blanca */
+  color: #fff;
+}
+
+/* --- Panel inferior (quita el blanco) --- */
+.tab-content{
+  background: #EEF3FF; /* azul muy suave, cámbialo si quieres */
+  border-radius: 0 0 12px 12px;
+  padding: 2rem;
+}
+
+.tab-panel{ background: transparent; } /* evita fondos blancos internos */
+
+/* Colores de texto tal cual */
+.tab-panel h3{ color: var(--primary-color); }
+.tab-panel p{ color: var(--text-color); }
+
+
 
 .photo-gallery {
     max-width: 900px;

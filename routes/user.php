@@ -16,5 +16,4 @@ Route::prefix('usuario')->name('user.')->middleware(['auth'])->group(function ()
     Route::put('/perfil', [ProfileController::class, 'update'])->name('profile.update');
     Route::get('/perfil/editar', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::get('/tienda', [ShopController::class, 'index'])->name('shop');
-    Route::get('/ordenes', [ShopController::class, 'index'])->name('orders');
 });

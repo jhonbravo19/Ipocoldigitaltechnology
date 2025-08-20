@@ -636,7 +636,7 @@
             <div class="contact-form">
                 <h3>Contáctenos</h3>
 
-                <form action="https://formspree.io/f/mwplyena" method="POST">
+                <form action="https://formspree.io/f/mrblwjoa" method="POST">
                     <input type="hidden" name="_subject" value="Centro de Ayuda - IPOCOL Digital Technology">
                     <input type="text" name="_gotcha" style="display:none">
 

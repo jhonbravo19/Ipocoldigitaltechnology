@@ -1,0 +1,55 @@
+.user-dashboard-container {
+    padding: 20px;
+}
+
+.page-title {
+    font-weight: bold;
+    color: #333;
+}
+
+.user-stat-card {
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+}
+
+.stat-icon-bg {
+    position: absolute;
+    font-size: 80px;
+    opacity: 0.1;
+    top: 10px;
+    right: 10px;
+}
+
+.stat-value {
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.quick-actions .btn-action {
+    margin-right: 10px;
+}
+
+.empty-state {
+    padding: 40px 20px;
+}
+
+.empty-icon {
+    font-size: 40px;
+    color: #ccc;
+    margin-bottom: 10px;
+}
+
+.quick-links .quick-link-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+    color: #333;
+    text-decoration: none;
+}
+
+.quick-links .quick-link-item:hover {
+    background: #f5f5f5;
+}

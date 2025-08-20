@@ -152,7 +152,7 @@
     <div id="general-chatbot" class="general-bot hidden">
         <div class="general-bot-header">
             <div class="general-bot-brand">
-                <img src="{{ asset('public/images/Logo.png') }}" alt="Colsertrans"
+                <img src="{{ asset('public/images/Logo.png') }}" alt="Ipocoldigitaltechnology"
                     style="width:24px;height:24px;object-fit:contain;" />
                 <span>Asistente Colsertrans</span>
             </div>

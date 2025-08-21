@@ -153,7 +153,7 @@
                                 <h5>Archivos PDF</h5>
                                 <div class="btn-group" role="group">
                                     @if($certificate->certificate_file_path)
-                                        <a href="{{ asset('public/storage/' . $certificate->certificate_file_path) }}?v={{ time() }}"
+                                        <a href="{{ asset('storage/' . $certificate->certificate_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-primary">
                                             <i class="fas fa-file-pdf"></i> Ver Certificado
                                         </a>

@@ -12,39 +12,6 @@ setlocale(LC_TIME, 'es_ES.UTF-8');
 
 class CertificateWordService
 {
-    private static function normalizeRelative(?string $path): ?string
-{
-    if (!$path) return null;
-    $p = str_replace('\\', '/', $path);
-    $p = ltrim($p, '/');
-
-    // elimina prefijos si vinieron en el path
-    foreach (['public/storage/app/public/', 'storage/app/public/', 'public/storage/', 'storage/'] as $prefix) {
-        if (stripos($p, $prefix) === 0) {
-            $p = substr($p, strlen($prefix));
-            break;
-        }
-    }
-
-    // si tienes inconsistencia en el nombre de carpeta, normalízala aquí:
-    // $p = str_replace('certificates/documentorquerido', 'certificates/documentorequerido', $p);
-
-    return $p; // ej: "certificates/123_certificate.pdf"
-}
-
-/**
- * Devuelve un path WEB que funciona con tu hosting actual
- * (sin depender de symlink). Resultado ej:
- * "public/storage/app/public/certificates/123_certificate.pdf"
- */
-private static function toPublicWebPath(?string $relative): ?string
-{
-    $rel = self::normalizeRelative($relative);
-    if (!$rel) return null;
-
-    return 'public/storage/app/public/' . $rel;
-}
-
     public static function generate($certificate)
     {
         try {
@@ -89,12 +56,12 @@ private static function toPublicWebPath(?string $relative): ?string
             return null;
         }
 
-        $certificatesDir = storage_path("app/public/certificates");
+        $certificatesDir = storage_path("certificates");
         if (!is_dir($certificatesDir)) {
             mkdir($certificatesDir, 0775, true);
         }
 
-        $docxPath = storage_path("app/public/certificates/{$certificate->id}_certificate.docx");
+        $docxPath = storage_path("certificates/{$certificate->id}_certificate.docx");
 
         $template = new TemplateProcessor($templatePath);
 
@@ -128,8 +95,8 @@ private static function toPublicWebPath(?string $relative): ?string
         $template->saveAs($docxPath);
         \Log::info("Certificate DOCX generated for certificate {$certificate->id}");
 
-        return self::toPublicWebPath("certificates/{$certificate->id}_certificate.docx");
-        //return "certificates/{$certificate->id}_certificate.docx";
+        
+        return "storage/certificates/{$certificate->id}_certificate.docx";
     }
 
     private static function convertToPdf($certificate, $docxPath): ?string
@@ -173,7 +140,7 @@ private static function toPublicWebPath(?string $relative): ?string
                             }
 
                             \Log::info("Certificate PDF successfully generated for certificate {$certificate->id}");
-                            return self::toPublicWebPath($pdfPath);
+                            return $pdfPath;
                         }
                     }
                     elseif (isset($fileInfo['FileData'])) {
@@ -188,7 +155,7 @@ private static function toPublicWebPath(?string $relative): ?string
                             }
 
                             \Log::info("Certificate PDF successfully generated from base64 for certificate {$certificate->id}");
-                            return self::toPublicWebPath($pdfPath);
+                            return $pdfPath;
                         }
                     }
                 }

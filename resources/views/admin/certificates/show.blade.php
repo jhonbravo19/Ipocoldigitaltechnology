@@ -153,7 +153,7 @@
                                 <h5>Archivos PDF</h5>
                                 <div class="btn-group" role="group">
                                     @if($certificate->certificate_file_path)
-                                        <a href="{{ asset('storage/' . $certificate->certificate_file_path) }}?v={{ time() }}"
+                                        <a href="{{ asset($certificate->certificate_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-primary">
                                             <i class="fas fa-file-pdf"></i> Ver Certificado
                                         </a>
@@ -164,7 +164,7 @@
                                     @endif
 
                                     @if($certificate->card_file_path)
-                                        <a href="{{ asset('storage/' . $certificate->card_file_path) }}?v={{ time() }}"
+                                        <a href="{{ asset($certificate->card_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-info">
                                             <i class="fas fa-id-card"></i> Ver Carnet
                                         </a>
@@ -175,11 +175,11 @@
                                     @endif
 
                                     @if($certificate->acta_file_path)
-                                        <a href="{{ asset('storage/' . $certificate->acta_file_path) }}?v={{ time() }}"
+                                        <a href="{{ asset($certificate->acta_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-success">
                                             <i class="fas fa-file-alt"></i> Ver Acta
                                         </a>
-                                        <a href="{{ asset('storage/' . $certificate->acta_file_path) }}?v={{ time() }}" download
+                                        <a href="{{ asset($certificate->acta_file_path) }}?v={{ time() }}" download
                                             class="btn btn-outline-success">
                                             <i class="fas fa-download"></i> Descargar Acta
                                         </a>

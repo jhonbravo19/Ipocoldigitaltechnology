@@ -52,12 +52,12 @@ class CardWordService
             return null;
         }
 
-        $certificatesDir = storage_path("app/public/certificates");
+        $certificatesDir = storage_path("certificates");
         if (!is_dir($certificatesDir)) {
             mkdir($certificatesDir, 0775, true);
         }
 
-        $docxPath = storage_path("app/public/certificates/{$certificate->id}_card.docx");
+        $docxPath = storage_path("certificates/{$certificate->id}_card.docx");
 
         $template = new TemplateProcessor($templatePath);
 
@@ -87,7 +87,7 @@ class CardWordService
         $template->saveAs($docxPath);
         \Log::info("Card DOCX generated for certificate {$certificate->id}");
 
-        return "certificates/{$certificate->id}_card.docx";
+        return "storage/certificates/{$certificate->id}_card.docx";
     }
 
     private static function convertToPdf($certificate, $docxPath): ?string

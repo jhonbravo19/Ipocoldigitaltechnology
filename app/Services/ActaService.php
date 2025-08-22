@@ -40,12 +40,12 @@ class ActaService
             return null;
         }
 
-        $certificatesDir = storage_path("app/public/certificates");
+        $certificatesDir = storage_path("certificates");
         if (!is_dir($certificatesDir)) {
             mkdir($certificatesDir, 0775, true);
         }
 
-        $docxPath = storage_path("app/public/certificates/{$certificate->id}_acta.docx");
+        $docxPath = storage_path("certificates/{$certificate->id}_acta.docx");
 
         $template = new TemplateProcessor($templatePath);
         
@@ -64,7 +64,7 @@ class ActaService
         $template->saveAs($docxPath);
         \Log::info("Acta DOCX generated for certificate {$certificate->id}");
 
-        return "certificates/{$certificate->id}_acta.docx";
+        return "storage/certificates/{$certificate->id}_acta.docx";
     }
 
     private static function convertToPdf($certificate, $docxPath): ?string
@@ -94,7 +94,8 @@ class ActaService
             return null;
         }
 
-        $fullDocxPath = storage_path("app/public/{$docxPath}");
+        $relative = str_replace("storage/", "", $docxPath); // "certificates/123_acta.docx"
+        $fullDocxPath = storage_path($relative);
         
         $response = Http::withHeaders([
             'Apikey' => $apiKey,
@@ -105,13 +106,17 @@ class ActaService
         )->post('https://api.cloudmersive.com/convert/docx/to/pdf');
 
         if ($response->successful()) {
-            $pdfPath = "certificates/{$certificate->id}_acta.pdf";
-            Storage::disk('public')->put($pdfPath, $response->body());
-            
-            unlink($fullDocxPath);
-            
-            return $pdfPath;
-        }
+    $pdfPath = "storage/certificates/{$certificate->id}_acta.pdf";
+    $pdfAbs  = storage_path("certificates/{$certificate->id}_acta.pdf");
+
+    file_put_contents($pdfAbs, $response->body());
+
+    if (file_exists($fullDocxPath)) {
+        unlink($fullDocxPath);
+    }
+
+    return $pdfPath; // <- lo que tu controller usará para mostrar/descargar
+}
 
         return null;
     }
@@ -125,7 +130,8 @@ class ActaService
             return null;
         }
 
-        $fullDocxPath = storage_path("app/public/{$docxPath}");
+        $relative = str_replace("storage/", "", $docxPath); // "certificates/123_acta.docx"
+$fullDocxPath = storage_path($relative);
         
         return null;
     }
@@ -138,7 +144,8 @@ class ActaService
             return null;
         }
 
-        $fullDocxPath = storage_path("app/public/{$docxPath}");
+        $relative = str_replace("storage/", "", $docxPath); // "certificates/123_acta.docx"
+$fullDocxPath = storage_path($relative);
         
         if (!file_exists($fullDocxPath)) {
             \Log::error("DOCX file not found: {$fullDocxPath}");
@@ -164,6 +171,35 @@ class ActaService
                         \Log::info("Using download URL method for certificate {$certificate->id}");
                         
                         $pdfDownload = Http::timeout(60)->get($fileInfo['Url']);
+                        
+                        
+                        if ($pdfDownload->successful()) {
+                            // Ruta WEB que usará tu vista
+                            $pdfPath = "storage/certificates/{$certificate->id}_acta.pdf";
+                            // Ruta ABSOLUTA en el servidor (carpeta storage/)
+                            $pdfAbs  = storage_path("certificates/{$certificate->id}_acta.pdf");
+
+                            // Asegura que exista el directorio
+                            if (!is_dir(dirname($pdfAbs))) {
+                                mkdir(dirname($pdfAbs), 0775, true);
+                            }
+
+                            // Guarda el PDF en storage/certificates
+                            file_put_contents($pdfAbs, $pdfDownload->body());
+
+                            \Log::info("PDF successfully downloaded from URL for certificate {$certificate->id}");
+
+                            // Borra el DOCX si existe
+                            if (is_file($fullDocxPath)) {
+                                @unlink($fullDocxPath);
+                            }
+
+                            // Devuelve la ruta WEB (coincide con public_html/storage/...)
+                            return $pdfPath;
+                        } else {
+                            \Log::error("Failed to download PDF from URL for certificate {$certificate->id}");
+                                                }
+
                         
                         if ($pdfDownload->successful()) {
                             $pdfPath = "certificates/{$certificate->id}_acta.pdf";

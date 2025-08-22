@@ -5,6 +5,7 @@ namespace App\Services;
 use PhpOffice\PhpWord\TemplateProcessor;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Http;
+use App\Support\DocxToPdf;
 use Carbon\Carbon;
 
 Carbon::setLocale('es');
@@ -15,15 +16,15 @@ class ActaService
     public static function generate($certificate)
     {
         try {
-            $docxPath = self::generateDocx($certificate);
-            
-            if (!$docxPath) {
+            $docxWebPath = self::generateDocx($certificate); // "storage/certificates/ID_acta.docx"
+            if (!$docxWebPath) {
                 return null;
             }
 
-            $pdfPath = self::convertToPdf($certificate, $docxPath);
-            
-            return $pdfPath ?: $docxPath;
+            $pdfWebPath = self::convertToPdf($certificate, $docxWebPath);
+
+            // Si por alguna razón no hubo PDF, devolvemos el DOCX
+            return $pdfWebPath ?: $docxWebPath;
 
         } catch (\Exception $e) {
             \Log::error("Error generating acta for certificate {$certificate->id}: " . $e->getMessage());
@@ -31,24 +32,28 @@ class ActaService
         }
     }
 
+    /**
+     * Genera el DOCX desde la plantilla y lo guarda en storage/certificates.
+     * Retorna la RUTA WEB (con prefijo "storage/") para consistencia con tu código actual.
+     */
     private static function generateDocx($certificate): ?string
     {
         $templatePath = storage_path('app/public/courses/' . $certificate->course->id . '/acta_template.docx');
-        
+
         if (!file_exists($templatePath)) {
             \Log::warning("No se encontró la plantilla del acta: {$templatePath}");
             return null;
         }
 
-        $certificatesDir = storage_path("certificates");
+        $certificatesDir = storage_path('certificates');
         if (!is_dir($certificatesDir)) {
             mkdir($certificatesDir, 0775, true);
         }
 
-        $docxPath = storage_path("certificates/{$certificate->id}_acta.docx");
+        $docxAbs = storage_path("certificates/{$certificate->id}_acta.docx");
 
         $template = new TemplateProcessor($templatePath);
-        
+
         $template->setValue('first_names', $certificate->holder->first_names ?? '');
         $template->setValue('last_names', $certificate->holder->last_names ?? '');
         $template->setValue('identification_type', $certificate->holder->identification_type ?? '');
@@ -61,82 +66,69 @@ class ActaService
         $config = \App\Models\CertificateTemplateConfig::getActiveConfig();
         self::processSignatures($template, $config);
 
-        $template->saveAs($docxPath);
+        $template->saveAs($docxAbs);
         \Log::info("Acta DOCX generated for certificate {$certificate->id}");
 
+        // devolvemos ruta WEB para mantener compatibilidad con tu flujo
         return "storage/certificates/{$certificate->id}_acta.docx";
     }
 
-    private static function convertToPdf($certificate, $docxPath): ?string
+    /**
+     * Intenta convertir localmente con DocxToPdf (HTML->PDF, barryvdh/domdpdf).
+     * Si algo falla, intenta con ConvertAPI (si CONVERTAPI_SECRET existe).
+     * Retorna la RUTA WEB del PDF.
+     */
+    private static function convertToPdf($certificate, string $docxWebPath): ?string
     {
-        \Log::info("Starting PDF conversion for certificate {$certificate->id}, DOCX: {$docxPath}");
-        
+        \Log::info("Starting PDF conversion for certificate {$certificate->id}, DOCX(web): {$docxWebPath}");
+
+        // Obtener ruta ABSOLUTA del DOCX a partir de "storage/..."
+        $relative = str_replace('storage/', '', $docxWebPath); // "certificates/ID_acta.docx"
+        $docxAbs  = storage_path($relative);
+        $pdfAbs   = storage_path("certificates/{$certificate->id}_acta.pdf");
+        $pdfWeb   = "storage/certificates/{$certificate->id}_acta.pdf";
+
+        // Asegurar carpeta destino
+        if (!is_dir(dirname($pdfAbs))) {
+            mkdir(dirname($pdfAbs), 0775, true);
+        }
+
         try {
-            $result = self::convertWithConvertApi($certificate, $docxPath);
-            
-            if ($result) {
-                \Log::info("PDF conversion successful for certificate {$certificate->id}: {$result}");
-                return $result;
-            } else {
-                \Log::warning("PDF conversion failed for certificate {$certificate->id}, keeping DOCX");
-                return null;
+            // 1) Conversión LOCAL (recomendada, 100% PHP)
+            DocxToPdf::convert($docxAbs, $pdfAbs);
+
+            // Limpieza opcional del DOCX
+            if (is_file($docxAbs)) {
+                @unlink($docxAbs);
             }
-            
-        } catch (\Exception $e) {
-            \Log::error("Exception during PDF conversion for certificate {$certificate->id}: " . $e->getMessage());
-            return null;
-        }
-    }
-    private static function convertWithCloudmersive($certificate, $docxPath): ?string
-    {
-        $apiKey = env('CLOUDMERSIVE_API_KEY');
-        if (!$apiKey) {
-            return null;
+
+            \Log::info("PDF conversion LOCAL successful for certificate {$certificate->id}: {$pdfWeb}");
+            return $pdfWeb;
+
+        } catch (\Throwable $e) {
+            \Log::error("Local PDF conversion failed for certificate {$certificate->id}: " . $e->getMessage());
         }
 
-        $relative = str_replace("storage/", "", $docxPath); // "certificates/123_acta.docx"
-        $fullDocxPath = storage_path($relative);
-        
-        $response = Http::withHeaders([
-            'Apikey' => $apiKey,
-        ])->attach(
-            'inputFile', 
-            file_get_contents($fullDocxPath), 
-            'document.docx'
-        )->post('https://api.cloudmersive.com/convert/docx/to/pdf');
+        // 2) FALLBACK: ConvertAPI (si tienes la key)
+        try {
+            $fallback = self::convertWithConvertApi($certificate, $docxWebPath);
+            if ($fallback) {
+                \Log::info("PDF conversion via ConvertAPI successful for certificate {$certificate->id}: {$fallback}");
+                return $fallback;
+            }
+        } catch (\Throwable $e) {
+            \Log::error("Fallback ConvertAPI failed for certificate {$certificate->id}: " . $e->getMessage());
+        }
 
-        if ($response->successful()) {
-    $pdfPath = "storage/certificates/{$certificate->id}_acta.pdf";
-    $pdfAbs  = storage_path("certificates/{$certificate->id}_acta.pdf");
-
-    file_put_contents($pdfAbs, $response->body());
-
-    if (file_exists($fullDocxPath)) {
-        unlink($fullDocxPath);
-    }
-
-    return $pdfPath; // <- lo que tu controller usará para mostrar/descargar
-}
-
+        \Log::warning("PDF conversion failed for certificate {$certificate->id}, keeping DOCX");
         return null;
     }
 
-    private static function convertWithILovePdf($certificate, $docxPath): ?string
-    {
-        $publicKey = env('ILOVEPDF_PUBLIC_KEY');
-        $secretKey = env('ILOVEPDF_SECRET_KEY');
-        
-        if (!$publicKey || !$secretKey) {
-            return null;
-        }
-
-        $relative = str_replace("storage/", "", $docxPath); // "certificates/123_acta.docx"
-$fullDocxPath = storage_path($relative);
-        
-        return null;
-    }
-
-    private static function convertWithConvertApi($certificate, $docxPath): ?string
+    /**
+     * ConvertAPI (fallback). Requiere CONVERTAPI_SECRET en .env
+     * Devuelve ruta web del PDF en storage/certificates.
+     */
+    private static function convertWithConvertApi($certificate, string $docxWebPath): ?string
     {
         $secret = env('CONVERTAPI_SECRET');
         if (!$secret) {
@@ -144,9 +136,9 @@ $fullDocxPath = storage_path($relative);
             return null;
         }
 
-        $relative = str_replace("storage/", "", $docxPath); // "certificates/123_acta.docx"
-$fullDocxPath = storage_path($relative);
-        
+        $relative     = str_replace("storage/", "", $docxWebPath); // "certificates/123_acta.docx"
+        $fullDocxPath = storage_path($relative);
+
         if (!file_exists($fullDocxPath)) {
             \Log::error("DOCX file not found: {$fullDocxPath}");
             return null;
@@ -154,109 +146,66 @@ $fullDocxPath = storage_path($relative);
 
         try {
             \Log::info("Converting DOCX to PDF using ConvertAPI for certificate {$certificate->id}");
-            
+
             $response = Http::timeout(60)
                 ->attach('File', file_get_contents($fullDocxPath), 'document.docx')
                 ->post("https://v2.convertapi.com/convert/docx/to/pdf?Secret={$secret}");
 
-            if ($response->successful()) {
-                $result = $response->json();
-                \Log::info("ConvertAPI response received for certificate {$certificate->id}");
-                
-                
-                if (isset($result['Files'][0])) {
-                    $fileInfo = $result['Files'][0];
-                    
-                    if (isset($fileInfo['Url'])) {
-                        \Log::info("Using download URL method for certificate {$certificate->id}");
-                        
-                        $pdfDownload = Http::timeout(60)->get($fileInfo['Url']);
-                        
-                        
-                        if ($pdfDownload->successful()) {
-                            // Ruta WEB que usará tu vista
-                            $pdfPath = "storage/certificates/{$certificate->id}_acta.pdf";
-                            // Ruta ABSOLUTA en el servidor (carpeta storage/)
-                            $pdfAbs  = storage_path("certificates/{$certificate->id}_acta.pdf");
-
-                            // Asegura que exista el directorio
-                            if (!is_dir(dirname($pdfAbs))) {
-                                mkdir(dirname($pdfAbs), 0775, true);
-                            }
-
-                            // Guarda el PDF en storage/certificates
-                            file_put_contents($pdfAbs, $pdfDownload->body());
-
-                            \Log::info("PDF successfully downloaded from URL for certificate {$certificate->id}");
-
-                            // Borra el DOCX si existe
-                            if (is_file($fullDocxPath)) {
-                                @unlink($fullDocxPath);
-                            }
-
-                            // Devuelve la ruta WEB (coincide con public_html/storage/...)
-                            return $pdfPath;
-                        } else {
-                            \Log::error("Failed to download PDF from URL for certificate {$certificate->id}");
-                                                }
-
-                        
-                        if ($pdfDownload->successful()) {
-                            $pdfPath = "certificates/{$certificate->id}_acta.pdf";
-                            Storage::disk('public')->put($pdfPath, $pdfDownload->body());
-                            
-                            \Log::info("PDF successfully downloaded from URL for certificate {$certificate->id}");
-                            
-                            if (file_exists($fullDocxPath)) {
-                                unlink($fullDocxPath);
-                            }
-                            
-                            return $pdfPath;
-                        } else {
-                            \Log::error("Failed to download PDF from URL for certificate {$certificate->id}");
-                        }
-                    }
-                    elseif (isset($fileInfo['FileData'])) {
-                        \Log::info("Using base64 data method for certificate {$certificate->id}");
-                        
-                        $pdfData = base64_decode($fileInfo['FileData']);
-                        
-                        if ($pdfData !== false && strlen($pdfData) > 0) {
-                            $pdfPath = "certificates/{$certificate->id}_acta.pdf";
-                            Storage::disk('public')->put($pdfPath, $pdfData);
-                            
-                            \Log::info("PDF successfully saved from base64 data for certificate {$certificate->id}");
-                            
-                            if (file_exists($fullDocxPath)) {
-                                unlink($fullDocxPath);
-                            }
-                            
-                            return $pdfPath;
-                        } else {
-                            \Log::error("Invalid base64 data for certificate {$certificate->id}");
-                        }
-                    }
-                    else {
-                        \Log::error("No URL or FileData in ConvertAPI response for certificate {$certificate->id}");
-                        \Log::debug("Available keys in Files[0]: " . implode(', ', array_keys($fileInfo)));
-                    }
-                } else {
-                    \Log::error("No Files array in ConvertAPI response for certificate {$certificate->id}");
-                    \Log::debug("ConvertAPI response keys: " . implode(', ', array_keys($result)));
-                }
-                
-                \Log::debug("Full ConvertAPI response for certificate {$certificate->id}: " . json_encode($result));
-                
-            } else {
-                \Log::error("ConvertAPI request failed for certificate {$certificate->id}: " . $response->status());
-                \Log::debug("ConvertAPI error response: " . $response->body());
+            if (!$response->successful()) {
+                \Log::error("ConvertAPI request failed ({$response->status()}) for certificate {$certificate->id}");
+                \Log::debug("ConvertAPI error: " . $response->body());
+                return null;
             }
+
+            $result = $response->json();
+            if (!isset($result['Files'][0])) {
+                \Log::error("No Files array in ConvertAPI response for certificate {$certificate->id}");
+                \Log::debug("ConvertAPI response: " . json_encode($result));
+                return null;
+            }
+
+            $fileInfo = $result['Files'][0];
+            $pdfAbs   = storage_path("certificates/{$certificate->id}_acta.pdf");
+            $pdfWeb   = "storage/certificates/{$certificate->id}_acta.pdf";
+
+            // Método por URL
+            if (!empty($fileInfo['Url'])) {
+                $pdfDownload = Http::timeout(60)->get($fileInfo['Url']);
+                if ($pdfDownload->successful()) {
+                    if (!is_dir(dirname($pdfAbs))) {
+                        mkdir(dirname($pdfAbs), 0775, true);
+                    }
+                    file_put_contents($pdfAbs, $pdfDownload->body());
+                    \Log::info("PDF saved from ConvertAPI URL for certificate {$certificate->id}");
+                    @unlink($fullDocxPath);
+                    return $pdfWeb;
+                }
+                \Log::error("Failed to download PDF URL from ConvertAPI for certificate {$certificate->id}");
+                return null;
+            }
+
+            // Método base64
+            if (!empty($fileInfo['FileData'])) {
+                $pdfData = base64_decode($fileInfo['FileData']);
+                if ($pdfData !== false && strlen($pdfData) > 0) {
+                    if (!is_dir(dirname($pdfAbs))) {
+                        mkdir(dirname($pdfAbs), 0775, true);
+                    }
+                    file_put_contents($pdfAbs, $pdfData);
+                    \Log::info("PDF saved from ConvertAPI base64 for certificate {$certificate->id}");
+                    @unlink($fullDocxPath);
+                    return $pdfWeb;
+                }
+                \Log::error("Invalid base64 PDF data from ConvertAPI for certificate {$certificate->id}");
+            }
+
+            \Log::error("No usable URL or FileData from ConvertAPI for certificate {$certificate->id}");
+            return null;
 
         } catch (\Exception $e) {
             \Log::error("Exception during ConvertAPI conversion for certificate {$certificate->id}: " . $e->getMessage());
+            return null;
         }
-
-        return null;
     }
 
     private static function processSignatures($template, $config): void
@@ -269,7 +218,7 @@ $fullDocxPath = storage_path($relative);
                         'path' => $signaturePath,
                         'width' => 150,
                         'height' => 70,
-                        'ratio' => true
+                        'ratio'  => true,
                     ]);
                 } catch (\Exception $e) {
                     \Log::warning("Error setting signature 1: " . $e->getMessage());
@@ -290,7 +239,7 @@ $fullDocxPath = storage_path($relative);
                         'path' => $signaturePath,
                         'width' => 150,
                         'height' => 70,
-                        'ratio' => true
+                        'ratio'  => true,
                     ]);
                 } catch (\Exception $e) {
                     \Log::warning("Error setting signature 2: " . $e->getMessage());

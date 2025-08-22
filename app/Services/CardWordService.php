@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use PhpOffice\PhpWord\TemplateProcessor;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Http;
+use App\Support\DocxToPdf; // <— IMPORTANTE
 use Carbon\Carbon;
 
 Carbon::setLocale('es');
@@ -15,15 +15,14 @@ class CardWordService
     public static function generate($certificate)
     {
         try {
-            $docxPath = self::generateDocx($certificate);
-
-            if (!$docxPath) {
+            $docxWebPath = self::generateDocx($certificate); // "storage/certificates/{id}_card.docx"
+            if (!$docxWebPath) {
                 return null;
             }
 
-            $pdfPath = self::convertToPdf($certificate, $docxPath);
+            $pdfWebPath = self::convertToPdf($certificate, $docxWebPath);
 
-            return $pdfPath ?: $docxPath;
+            return $pdfWebPath ?: $docxWebPath;
 
         } catch (\Exception $e) {
             \Log::error("Error generating card for certificate {$certificate->id}: " . $e->getMessage());
@@ -52,12 +51,12 @@ class CardWordService
             return null;
         }
 
-        $certificatesDir = storage_path("certificates");
-        if (!is_dir($certificatesDir)) {
-            mkdir($certificatesDir, 0775, true);
+        $dir = storage_path('certificates');
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
         }
 
-        $docxPath = storage_path("certificates/{$certificate->id}_card.docx");
+        $docxAbs = storage_path("certificates/{$certificate->id}_card.docx");
 
         $template = new TemplateProcessor($templatePath);
 
@@ -84,78 +83,111 @@ class CardWordService
 
         self::processImages($template, $certificate, $config);
 
-        $template->saveAs($docxPath);
+        $template->saveAs($docxAbs);
         \Log::info("Card DOCX generated for certificate {$certificate->id}");
 
+        // Ruta web (si usas storage:link apuntará al archivo; si no, sirve con un endpoint que lea desde storage_path)
         return "storage/certificates/{$certificate->id}_card.docx";
     }
 
-    private static function convertToPdf($certificate, $docxPath): ?string
+    /**
+     * Intento 1: conversión LOCAL con DocxToPdf (recomendado, 100% PHP).
+     * Fallback: ConvertAPI si tienes CONVERTAPI_SECRET.
+     * Retorna RUTA WEB del PDF.
+     */
+    private static function convertToPdf($certificate, string $docxWebPath): ?string
     {
+        \Log::info("Starting CARD PDF conversion for certificate {$certificate->id}, DOCX(web): {$docxWebPath}");
+
+        // Pasar de "storage/..." a ruta absoluta real en storage/
+        $relative = str_replace('storage/', '', $docxWebPath); // "certificates/{id}_card.docx"
+        $docxAbs  = storage_path($relative);
+        $pdfAbs   = storage_path("certificates/{$certificate->id}_card.pdf");
+        $pdfWeb   = "storage/certificates/{$certificate->id}_card.pdf";
+
+        if (!file_exists($docxAbs)) {
+            \Log::error("CARD DOCX not found at {$docxAbs}");
+            return null;
+        }
+
+        if (!is_dir(dirname($pdfAbs))) {
+            mkdir(dirname($pdfAbs), 0775, true);
+        }
+
+        // 1) LOCAL
+        try {
+            DocxToPdf::convert($docxAbs, $pdfAbs);
+
+            // Limpieza opcional
+            if (is_file($docxAbs)) {
+                @unlink($docxAbs);
+            }
+
+            \Log::info("CARD PDF conversion LOCAL successful for certificate {$certificate->id}: {$pdfWeb}");
+            return $pdfWeb;
+
+        } catch (\Throwable $e) {
+            \Log::error("Local CARD PDF conversion failed for certificate {$certificate->id}: " . $e->getMessage());
+        }
+
+        // 2) FALLBACK: ConvertAPI
         $secret = env('CONVERTAPI_SECRET');
         if (!$secret) {
             \Log::warning("CONVERTAPI_SECRET not set, keeping DOCX for card {$certificate->id}");
             return null;
         }
 
-        $fullDocxPath = storage_path("app/public/{$docxPath}");
-
-        if (!file_exists($fullDocxPath)) {
-            \Log::error("DOCX file not found: {$fullDocxPath}");
-            return null;
-        }
-
         try {
-            \Log::info("Converting card DOCX to PDF using ConvertAPI for certificate {$certificate->id}");
+            \Log::info("Converting CARD via ConvertAPI for certificate {$certificate->id}");
 
             $response = Http::timeout(60)
-                ->attach('File', file_get_contents($fullDocxPath), 'document.docx')
+                ->attach('File', file_get_contents($docxAbs), 'document.docx')
                 ->post("https://v2.convertapi.com/convert/docx/to/pdf?Secret={$secret}");
 
-            if ($response->successful()) {
-                $result = $response->json();
-                \Log::info("ConvertAPI response received for card {$certificate->id}");
-
-                if (isset($result['Files'][0])) {
-                    $fileInfo = $result['Files'][0];
-
-                    if (isset($fileInfo['Url'])) {
-                        $pdfDownload = Http::timeout(60)->get($fileInfo['Url']);
-
-                        if ($pdfDownload->successful()) {
-                            $pdfPath = "certificates/{$certificate->id}_card.pdf";
-                            Storage::disk('public')->put($pdfPath, $pdfDownload->body());
-
-                            if (file_exists($fullDocxPath)) {
-                                unlink($fullDocxPath);
-                            }
-
-                            \Log::info("Card PDF successfully generated for certificate {$certificate->id}");
-                            return $pdfPath;
-                        }
-                    } elseif (isset($fileInfo['FileData'])) {
-                        $pdfData = base64_decode($fileInfo['FileData']);
-
-                        if ($pdfData !== false && strlen($pdfData) > 0) {
-                            $pdfPath = "certificates/{$certificate->id}_card.pdf";
-                            Storage::disk('public')->put($pdfPath, $pdfData);
-
-                            if (file_exists($fullDocxPath)) {
-                                unlink($fullDocxPath);
-                            }
-
-                            \Log::info("Card PDF successfully generated from base64 for certificate {$certificate->id}");
-                            return $pdfPath;
-                        }
-                    }
-                }
+            if (!$response->successful()) {
+                \Log::error("ConvertAPI request failed ({$response->status()}) for CARD {$certificate->id}");
+                \Log::debug("ConvertAPI error: " . $response->body());
+                return null;
             }
 
-        } catch (\Exception $e) {
-            \Log::error("Exception during card PDF conversion for certificate {$certificate->id}: " . $e->getMessage());
-        }
+            $result  = $response->json();
+            $file    = $result['Files'][0] ?? null;
 
-        return null;
+            if (!$file) {
+                \Log::error("No Files[0] in ConvertAPI response for CARD {$certificate->id}");
+                return null;
+            }
+
+            if (!empty($file['Url'])) {
+                $pdfDownload = Http::timeout(60)->get($file['Url']);
+                if ($pdfDownload->successful()) {
+                    file_put_contents($pdfAbs, $pdfDownload->body());
+                    @unlink($docxAbs);
+                    \Log::info("CARD PDF saved from ConvertAPI URL for certificate {$certificate->id}");
+                    return $pdfWeb;
+                }
+                \Log::error("Failed to download CARD PDF URL from ConvertAPI for certificate {$certificate->id}");
+                return null;
+            }
+
+            if (!empty($file['FileData'])) {
+                $pdfData = base64_decode($file['FileData']);
+                if ($pdfData !== false && strlen($pdfData) > 0) {
+                    file_put_contents($pdfAbs, $pdfData);
+                    @unlink($docxAbs);
+                    \Log::info("CARD PDF saved from ConvertAPI base64 for certificate {$certificate->id}");
+                    return $pdfWeb;
+                }
+                \Log::error("Invalid base64 CARD PDF data from ConvertAPI for certificate {$certificate->id}");
+            }
+
+            \Log::error("No usable CARD PDF returned by ConvertAPI for certificate {$certificate->id}");
+            return null;
+
+        } catch (\Throwable $e) {
+            \Log::error("Exception during ConvertAPI CARD conversion for certificate {$certificate->id}: " . $e->getMessage());
+            return null;
+        }
     }
 
     private static function processImages($template, $certificate, $config): void
@@ -165,10 +197,10 @@ class CardWordService
             if (file_exists($logoPath)) {
                 try {
                     $template->setImageValue('company_logo', [
-                        'path' => $logoPath,
-                        'width' => 65,
+                        'path'   => $logoPath,
+                        'width'  => 65,
                         'height' => 70,
-                        'ratio' => true
+                        'ratio'  => true
                     ]);
                 } catch (\Exception $e) {
                     \Log::warning("Error setting company logo in card: " . $e->getMessage());
@@ -186,14 +218,13 @@ class CardWordService
             if (file_exists($bgPath)) {
                 try {
                     $template->setImageValue('carnet_background_image', [
-                        'path' => $bgPath,
-                        'width' => 5,
-                        'height' => 5,
-                        'ratio' => true,
+                        'path'      => $bgPath,
+                        'width'     => 5,
+                        'height'    => 5,
+                        'ratio'     => true,
                         'alignment' => 'left',
-                        'valign' => 'top'
+                        'valign'    => 'top'
                     ]);
-
                 } catch (\Exception $e) {
                     \Log::warning("Error setting carnet background: " . $e->getMessage());
                     $template->setValue('carnet_background_image', '');
@@ -210,10 +241,10 @@ class CardWordService
             if (file_exists($photoPath)) {
                 try {
                     $template->setImageValue('holder_photo', [
-                        'path' => $photoPath,
-                        'width' => 200,
+                        'path'   => $photoPath,
+                        'width'  => 200,
                         'height' => 100,
-                        'ratio' => true
+                        'ratio'  => true
                     ]);
                 } catch (\Exception $e) {
                     \Log::warning("Error setting holder photo in card: " . $e->getMessage());

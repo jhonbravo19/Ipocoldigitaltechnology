@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use PhpOffice\PhpWord\TemplateProcessor;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Http;
 use App\Support\DocxToPdf; // <— IMPORTANTE
 use Carbon\Carbon;
@@ -15,11 +16,13 @@ class CardWordService
     public static function generate($certificate)
     {
         try {
+            // DOCX en storage/app/public/certificates
             $docxWebPath = self::generateDocx($certificate); // "storage/certificates/{id}_card.docx"
             if (!$docxWebPath) {
                 return null;
             }
 
+            // PDF en storage/app/public/certificates
             $pdfWebPath = self::convertToPdf($certificate, $docxWebPath);
 
             return $pdfWebPath ?: $docxWebPath;
@@ -51,12 +54,11 @@ class CardWordService
             return null;
         }
 
-        $dir = storage_path('certificates');
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
+        // Asegurar carpeta destino en el disco 'public'
+        Storage::disk('public')->makeDirectory('certificates');
 
-        $docxAbs = storage_path("certificates/{$certificate->id}_card.docx");
+        // Ruta absoluta dentro de storage/app/public
+        $docxAbs = Storage::disk('public')->path("certificates/{$certificate->id}_card.docx");
 
         $template = new TemplateProcessor($templatePath);
 
@@ -84,35 +86,35 @@ class CardWordService
         self::processImages($template, $certificate, $config);
 
         $template->saveAs($docxAbs);
-        \Log::info("Card DOCX generated for certificate {$certificate->id}");
+        \Log::info("Card DOCX generated (public disk) for certificate {$certificate->id}");
 
-        // Ruta web (si usas storage:link apuntará al archivo; si no, sirve con un endpoint que lea desde storage_path)
+        // Ruta web compatible con el symlink public/storage → storage/app/public
         return "storage/certificates/{$certificate->id}_card.docx";
     }
 
     /**
      * Intento 1: conversión LOCAL con DocxToPdf (recomendado, 100% PHP).
      * Fallback: ConvertAPI si tienes CONVERTAPI_SECRET.
-     * Retorna RUTA WEB del PDF.
+     * Retorna RUTA WEB del PDF: "storage/certificates/{id}_card.pdf"
      */
     private static function convertToPdf($certificate, string $docxWebPath): ?string
     {
         \Log::info("Starting CARD PDF conversion for certificate {$certificate->id}, DOCX(web): {$docxWebPath}");
 
-        // Pasar de "storage/..." a ruta absoluta real en storage/
-        $relative = str_replace('storage/', '', $docxWebPath); // "certificates/{id}_card.docx"
-        $docxAbs  = storage_path($relative);
-        $pdfAbs   = storage_path("certificates/{$certificate->id}_card.pdf");
-        $pdfWeb   = "storage/certificates/{$certificate->id}_card.pdf";
+        // De "storage/certificates/xxx.docx" → "certificates/xxx.docx"
+        $relative = ltrim(str_replace('storage/', '', $docxWebPath), '/');
+
+        // Rutas absolutas en disco 'public'
+        $docxAbs = Storage::disk('public')->path($relative);
+        $pdfAbs  = Storage::disk('public')->path("certificates/{$certificate->id}_card.pdf");
+        $pdfWeb  = "storage/certificates/{$certificate->id}_card.pdf";
 
         if (!file_exists($docxAbs)) {
             \Log::error("CARD DOCX not found at {$docxAbs}");
             return null;
         }
 
-        if (!is_dir(dirname($pdfAbs))) {
-            mkdir(dirname($pdfAbs), 0775, true);
-        }
+        Storage::disk('public')->makeDirectory('certificates');
 
         // 1) LOCAL
         try {

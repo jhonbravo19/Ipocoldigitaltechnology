@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use PhpOffice\PhpWord\TemplateProcessor;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;       // <- FALTABA
 use App\Support\DocxToPdf;
 use Carbon\Carbon;
 
@@ -15,23 +15,27 @@ class CertificateWordService
     public static function generate($certificate)
     {
         try {
-            $docxWebPath = self::generateDocx($certificate); // "storage/certificates/{id}_certificate.docx"
-            if (!$docxWebPath) {
+            // 1) Genera el DOCX en el DISK 'public' y devuelve ruta relativa: "certificates/ID_certificate.docx"
+            $docxRelative = self::generateDocx($certificate);
+            if (!$docxRelative) {
                 return null;
             }
 
-            $pdfWebPath = self::convertToPdf($certificate, $docxWebPath);
+            // 2) Convierte a PDF localmente (mPDF) y devuelve "certificates/ID_certificate.pdf"
+            $pdfRelative = self::convertToPdf($certificate, $docxRelative);
 
-            return $pdfWebPath ?: $docxWebPath;
+            // 3) Devuelve PDF si existe; si no, al menos el DOCX
+            return $pdfRelative ?: $docxRelative;
 
-        } catch (\Exception $e) {
-            \Log::error("Error generating certificate for certificate {$certificate->id}: " . $e->getMessage());
+        } catch (\Throwable $e) {
+            \Log::error("Error generating certificate {$certificate->id}: " . $e->getMessage());
             return null;
         }
     }
 
     private static function generateDocx($certificate): ?string
     {
+        // Busca plantilla global o por curso (en storage/app/public/…)
         $templatePaths = [
             storage_path('app/public/templates/certificate_template.docx'),
             storage_path('app/public/courses/' . $certificate->course->id . '/certificate_template.docx'),
@@ -45,19 +49,22 @@ class CertificateWordService
                 break;
             }
         }
-
         if (!$templatePath) {
-            \Log::warning("No se encontró plantilla de certificado (ni global ni específica del curso {$certificate->course->id})");
+            \Log::warning("No se encontró plantilla (global ni curso {$certificate->course->id})");
             return null;
         }
 
-        $dir = storage_path('certificates');
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
+        // ✅ RUTA RELATIVA en el DISK 'public'
+        $relative = "certificates/{$certificate->id}_certificate.docx";
+        // ✅ RUTA ABSOLUTA real
+        $absolute = Storage::disk('public')->path($relative);
+
+        // Asegura carpeta
+        if (!is_dir(dirname($absolute))) {
+            mkdir(dirname($absolute), 0775, true);
         }
 
-        $docxAbs = storage_path("certificates/{$certificate->id}_certificate.docx");
-
+        // Rellenar DOCX
         $template = new TemplateProcessor($templatePath);
         $config   = self::getConfig();
 
@@ -86,109 +93,41 @@ class CertificateWordService
 
         self::processImages($template, $config);
 
-        $template->saveAs($docxAbs);
-        \Log::info("Certificate DOCX generated for certificate {$certificate->id}");
+        // Guardar DOCX
+        $template->saveAs($absolute);
+        \Log::info("Certificate DOCX generated: {$absolute}");
 
-        // Devolvemos ruta WEB (si no tienes storage:link, sirve desde un endpoint que lea storage_path)
-        return "storage/certificates/{$certificate->id}_certificate.docx";
+        // Devuelve la RUTA RELATIVA (se expone como /storage/… si hiciste storage:link)
+        return $relative;
     }
 
-    /**
-     * 1) Intento local con DocxToPdf (recomendado, 100% PHP).
-     * 2) Fallback ConvertAPI si existe CONVERTAPI_SECRET.
-     * Devuelve ruta web del PDF.
-     */
-    private static function convertToPdf($certificate, string $docxWebPath): ?string
+    private static function convertToPdf($certificate, string $docxRelative): ?string
     {
-        \Log::info("Starting CERT PDF conversion for certificate {$certificate->id}, DOCX(web): {$docxWebPath}");
-
-        // Pasar "storage/..." a ruta absoluta real
-        $relative = str_replace('storage/', '', $docxWebPath); // "certificates/{id}_certificate.docx"
-        $docxAbs  = storage_path($relative);
-        $pdfAbs   = storage_path("certificates/{$certificate->id}_certificate.pdf");
-        $pdfWeb   = "storage/certificates/{$certificate->id}_certificate.pdf";
-
-        if (!file_exists($docxAbs)) {
-            \Log::error("CERT DOCX not found at {$docxAbs}");
-            return null;
-        }
-
-        if (!is_dir(dirname($pdfAbs))) {
-            mkdir(dirname($pdfAbs), 0775, true);
-        }
-
-        // 1) LOCAL
         try {
+            $docxAbs = Storage::disk('public')->path($docxRelative);
+            if (!file_exists($docxAbs)) {
+                \Log::error("DOCX no encontrado: {$docxAbs}");
+                return null;
+            }
+
+            $pdfRelative = "certificates/{$certificate->id}_certificate.pdf";
+            $pdfAbs = Storage::disk('public')->path($pdfRelative);
+
+            if (!is_dir(dirname($pdfAbs))) {
+                mkdir(dirname($pdfAbs), 0775, true);
+            }
+
+            // Conversión local (mPDF) usando tu soporte
             DocxToPdf::convert($docxAbs, $pdfAbs);
 
-            // Limpieza opcional
-            if (is_file($docxAbs)) {
-                @unlink($docxAbs);
-            }
+            // Limpieza opcional del DOCX
+            @unlink($docxAbs);
 
-            \Log::info("CERT PDF conversion LOCAL successful for certificate {$certificate->id}: {$pdfWeb}");
-            return $pdfWeb;
+            \Log::info("Certificate PDF generated: {$pdfAbs}");
+            return $pdfRelative;
 
         } catch (\Throwable $e) {
-            \Log::error("Local CERT PDF conversion failed for certificate {$certificate->id}: " . $e->getMessage());
-        }
-
-        // 2) FALLBACK: ConvertAPI
-        $secret = env('CONVERTAPI_SECRET');
-        if (!$secret) {
-            \Log::warning("CONVERTAPI_SECRET not set, keeping DOCX for certificate {$certificate->id}");
-            return null;
-        }
-
-        try {
-            \Log::info("Converting CERT via ConvertAPI for certificate {$certificate->id}");
-
-            $response = Http::timeout(60)
-                ->attach('File', file_get_contents($docxAbs), 'document.docx')
-                ->post("https://v2.convertapi.com/convert/docx/to/pdf?Secret={$secret}");
-
-            if (!$response->successful()) {
-                \Log::error("ConvertAPI request failed ({$response->status()}) for CERT {$certificate->id}");
-                \Log::debug("ConvertAPI error: " . $response->body());
-                return null;
-            }
-
-            $result = $response->json();
-            $file   = $result['Files'][0] ?? null;
-
-            if (!$file) {
-                \Log::error("No Files[0] in ConvertAPI response for CERT {$certificate->id}");
-                return null;
-            }
-
-            if (!empty($file['Url'])) {
-                $pdfDownload = Http::timeout(60)->get($file['Url']);
-                if ($pdfDownload->successful()) {
-                    file_put_contents($pdfAbs, $pdfDownload->body());
-                    @unlink($docxAbs);
-                    \Log::info("CERT PDF saved from ConvertAPI URL for certificate {$certificate->id}");
-                    return $pdfWeb;
-                }
-                \Log::error("Failed to download CERT PDF URL from ConvertAPI for certificate {$certificate->id}");
-                return null;
-            }
-
-            if (!empty($file['FileData'])) {
-                $pdfData = base64_decode($file['FileData']);
-                if ($pdfData !== false && strlen($pdfData) > 0) {
-                    file_put_contents($pdfAbs, $pdfData);
-                    @unlink($docxAbs);
-                    \Log::info("CERT PDF saved from ConvertAPI base64 for certificate {$certificate->id}");
-                    return $pdfWeb;
-                }
-                \Log::error("Invalid base64 CERT PDF data from ConvertAPI for certificate {$certificate->id}");
-            }
-
-            \Log::error("No usable CERT PDF returned by ConvertAPI for certificate {$certificate->id}");
-            return null;
-
-        } catch (\Throwable $e) {
-            \Log::error("Exception during ConvertAPI CERT conversion for certificate {$certificate->id}: " . $e->getMessage());
+            \Log::error("Error al convertir a PDF cert {$certificate->id}: " . $e->getMessage());
             return null;
         }
     }

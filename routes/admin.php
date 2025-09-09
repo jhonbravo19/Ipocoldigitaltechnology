@@ -40,5 +40,6 @@ Route::prefix('admin')->name('admin.')->middleware(['auth'])->group(function () 
 
         Route::post('/generate-pdf', [AdminTemplateController::class, 'generatePDF'])->name('generate-pdf');
         Route::post('/delete-image', [AdminTemplateController::class, 'deleteImage'])->name('delete-image');
+
     });
 });

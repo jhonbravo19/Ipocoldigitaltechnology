@@ -16,7 +16,7 @@
                             <a href="{{ route('admin.certificates.edit', $certificate) }}" class="btn btn-warning">
                                 <i class="fas fa-edit"></i> Editar
                             </a>
-                            @if($certificate->status === 'active')
+                            @if ($certificate->status === 'active')
                                 <form action="{{ route('admin.certificates.toggleStatus', $certificate) }}" method="POST"
                                     class="d-inline">
                                     @csrf
@@ -67,7 +67,7 @@
                                     <tr>
                                         <th>Tiene Licencia:</th>
                                         <td>
-                                            @if($certificate->holder->has_drivers_license === 'SI')
+                                            @if ($certificate->holder->has_drivers_license === 'SI')
                                                 <span class="badge bg-success">SI</span>
                                             @else
                                                 <span class="badge bg-secondary">NO</span>
@@ -109,13 +109,13 @@
                                     <tr>
                                         <th>Estado:</th>
                                         <td>
-                                            @if($certificate->status === 'active')
+                                            @if ($certificate->status === 'active')
                                                 <span class="badge bg-success text-white me-2">Activo</span>
                                             @else
                                                 <span class="badge bg-secondary text-white me-2">Inactivo</span>
                                             @endif
 
-                                            @if($certificate->isExpired())
+                                            @if ($certificate->isExpired())
                                                 <span class="badge bg-danger text-white">
                                                     Vencido {{ $certificate->expiry_date->diffForHumans() }}
                                                 </span>
@@ -138,12 +138,12 @@
                             </div>
                         </div>
 
-                        @if($certificate->holder->photo_path)
+                        @if ($certificate->holder->photo_path)
                             <div class="row mt-3">
                                 <div class="col-12">
                                     <h5>Fotografía</h5>
-                                    <img src="{{ asset('storage/' . $certificate->holder->photo_path) }}" alt="Foto del titular"
-                                        class="img-thumbnail" style="max-width: 200px;">
+                                    <img src="{{ asset('storage/' . $certificate->holder->photo_path) }}"
+                                        alt="Foto del titular" class="img-thumbnail" style="max-width: 200px;">
                                 </div>
                             </div>
                         @endif
@@ -151,30 +151,34 @@
                         <div class="row mt-4">
                             <div class="col-12">
                                 <h5>Archivos PDF</h5>
+                                <h5>Archivos PDF</h5>
                                 <div class="btn-group" role="group">
-                                    @if($certificate->certificate_file_path)
-                                        <a href="{{ asset($certificate->certificate_file_path) }}?v={{ time() }}"
-                                            target="_blank" class="btn btn-primary">
+                                    @if ($certificate->certificate_file_path)
+                                        @php $url = asset($certificate->certificate_file_path); @endphp
+
+                                        <a href="{{ $url }}?v={{ time() }}" target="_blank"
+                                            class="btn btn-primary">
                                             <i class="fas fa-file-pdf"></i> Ver Certificado
                                         </a>
-                                        <a href="{{ asset('storage/' . $certificate->certificate_file_path) }}?v={{ time() }}"
-                                            download class="btn btn-outline-primary">
+
+                                        <a href="{{ $url }}?v={{ time() }}" download
+                                            class="btn btn-outline-primary">
                                             <i class="fas fa-download"></i> Descargar Certificado
                                         </a>
                                     @endif
 
-                                    @if($certificate->card_file_path)
+                                    @if ($certificate->card_file_path)
                                         <a href="{{ asset($certificate->card_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-info">
                                             <i class="fas fa-id-card"></i> Ver Carnet
                                         </a>
-                                        <a href="{{ asset('storage/' . $certificate->card_file_path) }}?v={{ time() }}" download
-                                            class="btn btn-outline-info">
+                                        <a href="{{ asset('storage/' . $certificate->card_file_path) }}?v={{ time() }}"
+                                            download class="btn btn-outline-info">
                                             <i class="fas fa-download"></i> Descargar Carnet
                                         </a>
                                     @endif
 
-                                    @if($certificate->acta_file_path)
+                                    @if ($certificate->acta_file_path)
                                         <a href="{{ asset($certificate->acta_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-success">
                                             <i class="fas fa-file-alt"></i> Ver Acta
@@ -185,7 +189,7 @@
                                         </a>
                                     @endif
 
-                                    @if($certificate->paquete_file_path)
+                                    @if ($certificate->paquete_file_path)
                                         <a href="{{ asset('storage/' . $certificate->paquete_file_path) }}?v={{ time() }}"
                                             target="_blank" class="btn btn-dark">
                                             <i class="fas fa-layer-group"></i> Ver Paquete Completo
@@ -196,8 +200,8 @@
                                         </a>
                                     @endif
 
-                                    <form action="{{ route('admin.certificates.regenerate', $certificate) }}" method="POST"
-                                        class="d-inline">
+                                    <form action="{{ route('admin.certificates.regenerate', $certificate) }}"
+                                        method="POST" class="d-inline">
                                         @csrf
                                         <button type="submit" class="btn btn-warning"
                                             onclick="return confirm('¿Regenerar los PDFs?')">
@@ -208,7 +212,7 @@
                             </div>
                         </div>
 
-                        @if(!$certificate->certificate_file_path || !$certificate->card_file_path)
+                        @if (!$certificate->certificate_file_path || !$certificate->card_file_path)
                             <div class="alert alert-warning mt-3">
                                 <i class="fas fa-exclamation-triangle"></i>
                                 Los archivos PDF no han sido generados o están faltando. Use el botón "Regenerar PDFs" para

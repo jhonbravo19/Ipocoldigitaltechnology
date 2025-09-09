@@ -18,7 +18,7 @@ class FullPackageService
 
         $merger = new Merger(new TcpdiDriver());
 
-        // Agrega en el orden deseado, resolviendo cada ruta de forma robusta
+        // Agrega en el orden deseado (resuelve rutas de forma robusta)
         self::addIfExists($merger, $certificate->certificate_file_path);
         self::addIfExists($merger, $certificate->card_file_path);
         self::addIfExists($merger, $certificate->course->card_back_file_path ?? null);
@@ -27,30 +27,29 @@ class FullPackageService
 
         $pdfContent = $merger->merge();
 
-        // Asegura el directorio final en storage/certificates
-        $certDir = storage_path('certificates');
-        if (!is_dir($certDir)) {
-            mkdir($certDir, 0775, true);
-        }
+        // Asegura carpeta final en disco 'public' -> storage/app/public/certificates
+        Storage::disk('public')->makeDirectory('certificates');
 
-        $fileName    = self::generateFileName($certificate); // p.ej. NOMBRE_CEDULA.TODO.pdf
-        $absOutPath  = storage_path("certificates/{$fileName}"); // destino real en disco
-        $relOutPath  = "storage/certificates/{$fileName}";       // ruta que guardarás en BD
+        $fileName = self::generateFileName($certificate); // p.ej. NOMBRE_CEDULA.TODO.pdf
 
-        // Si existía un paquete anterior, elimínalo (soporta ambas ubicaciones posibles)
-        if ($certificate->paquete_file_path) {
+        // Ruta absoluta (real en disco) y ruta web (para BD)
+        $absOutPath = Storage::disk('public')->path("certificates/{$fileName}");      // /full/path/storage/app/public/certificates/...
+        $relOutWeb  = "storage/certificates/{$fileName}";                             // para <a href="{{ asset(...) }}">
+
+        // Si existía un paquete anterior, elimínalo (soporta ubicaciones viejas/nuevas)
+        if (!empty($certificate->paquete_file_path)) {
             self::safeDelete($certificate->paquete_file_path);
         }
 
-        // Escribe el PDF final directamente en storage/certificates
+        // Escribe el PDF final en el disco público
         file_put_contents($absOutPath, $pdfContent);
 
-        $certificate->paquete_file_path = $relOutPath;
+        $certificate->paquete_file_path = $relOutWeb;
         $certificate->save();
 
-        \Log::info("Package generated at: {$relOutPath}");
+        \Log::info("Package generated at: {$relOutWeb}");
 
-        return $relOutPath;
+        return $relOutWeb;
     }
 
     private static function generateFileName(Certificate $certificate): string
@@ -61,7 +60,6 @@ class FullPackageService
         $fullName  = trim("{$firstName} {$lastName} {$idNum}") ?: "Certificate_{$certificate->id}";
 
         $clean = self::sanitizeFileName($fullName);
-
         $fileName = "{$clean}.TODO.pdf";
         \Log::info("Generated filename: {$fileName} from holder: {$fullName}");
 
@@ -91,12 +89,12 @@ class FullPackageService
     }
 
     /**
-     * Intenta resolver una ruta relativa guardada en BD a una ruta absoluta válida en disco.
+     * Resuelve una ruta (web/relativa/absoluta) a una ruta ABSOLUTA existente.
      * Soporta:
-     *   - Rutas absolutas (ya existentes)
-     *   - "storage/certificates/..."  -> storage_path("certificates/...")
-     *   - "certificates/..." en disco public -> Storage::disk('public')->path(...)
-     *   - "app/public/..." (casos viejos)
+     *  - Absolutas ya existentes
+     *  - "storage/certificates/..."  -> disco public ("certificates/...") y fallback a storage_path("certificates/...")
+     *  - "certificates/..." en disco public
+     *  - "app/public/..." (legado)
      */
     private static function resolveAbsolutePath(?string $path): ?string
     {
@@ -107,32 +105,36 @@ class FullPackageService
             return $path;
         }
 
-        // Normaliza separadores
         $norm = str_replace('\\', '/', $path);
 
-        // 2) Si empieza por "storage/..." y apunta a certificates, busca en storage_path("certificates/...")
+        // 2) "storage/certificates/..." => primero intenta en disco public
         if (str_starts_with($norm, 'storage/certificates/')) {
-            $candidate = storage_path(substr($norm, strlen('storage/'))); // -> storage_path('certificates/...')
+            $publicRel = substr($norm, strlen('storage/')); // "certificates/..."
+            if (Storage::disk('public')->exists($publicRel)) {
+                return Storage::disk('public')->path($publicRel);
+            }
+            // Fallback: vieja ubicación directa en storage/
+            $candidate = storage_path($publicRel); // storage_path("certificates/...")
             if (file_exists($candidate)) return $candidate;
         }
 
-        // 3) Si es "certificates/..." en disco public (viejo enfoque)
+        // 3) "certificates/..." (relativo al disco public)
         if (str_starts_with($norm, 'certificates/')) {
             if (Storage::disk('public')->exists($norm)) {
                 return Storage::disk('public')->path($norm);
             }
-            // también probar en storage_path('certificates/...') por si fue movido
+            // Fallback: vieja ubicación directa en storage/
             $candidate = storage_path($norm);
             if (file_exists($candidate)) return $candidate;
         }
 
-        // 4) Si empieza por "app/public/..." (algún legado)
+        // 4) "app/public/..." (legado)
         if (str_starts_with($norm, 'app/public/')) {
             $candidate = storage_path($norm);
             if (file_exists($candidate)) return $candidate;
         }
 
-        // 5) Último intento directo dentro de storage/
+        // 5) Último intento dentro de storage/
         $maybeStorage = storage_path($norm);
         if (file_exists($maybeStorage)) {
             return $maybeStorage;
@@ -175,19 +177,33 @@ class FullPackageService
     }
 
     /**
-     * Elimina un archivo previo, soportando tanto la ubicación antigua (public)
-     * como la nueva ("storage/certificates/...").
+     * Elimina un archivo previo, soportando tanto la ubicación antigua (directo en storage/)
+     * como la nueva (disco public con ruta web "storage/certificates/...").
      */
     private static function safeDelete(string $storedPath): void
     {
-        // Intento 1: si era del disco public
-        if (Storage::disk('public')->exists($storedPath)) {
-            Storage::disk('public')->delete($storedPath);
-            \Log::info("Deleted old package from public disk: {$storedPath}");
-            return;
+        $norm = str_replace('\\', '/', $storedPath);
+
+        // Si viene como "storage/certificates/..." => en disco public el relativo es "certificates/..."
+        if (str_starts_with($norm, 'storage/')) {
+            $publicRel = substr($norm, strlen('storage/')); // "certificates/..."
+            if (Storage::disk('public')->exists($publicRel)) {
+                Storage::disk('public')->delete($publicRel);
+                \Log::info("Deleted old package from public disk: {$publicRel}");
+                return;
+            }
         }
 
-        // Intento 2: si era "storage/certificates/..."
+        // Intento directo en disco public por si en BD quedó "certificates/..."
+        if (str_starts_with($norm, 'certificates/')) {
+            if (Storage::disk('public')->exists($norm)) {
+                Storage::disk('public')->delete($norm);
+                \Log::info("Deleted old package from public disk: {$norm}");
+                return;
+            }
+        }
+
+        // Fallback: ubicación antigua directa dentro de storage/
         $abs = self::resolveAbsolutePath($storedPath);
         if ($abs && is_file($abs)) {
             @unlink($abs);

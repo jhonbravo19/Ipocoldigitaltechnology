@@ -16,11 +16,13 @@ class ActaService
     public static function generate($certificate)
     {
         try {
+            // genera DOCX en storage/app/public/certificates
             $docxWebPath = self::generateDocx($certificate); // "storage/certificates/ID_acta.docx"
             if (!$docxWebPath) {
                 return null;
             }
 
+            // convierte a PDF y lo guarda también en storage/app/public/certificates
             $pdfWebPath = self::convertToPdf($certificate, $docxWebPath);
 
             // Si por alguna razón no hubo PDF, devolvemos el DOCX
@@ -33,24 +35,23 @@ class ActaService
     }
 
     /**
-     * Genera el DOCX desde la plantilla y lo guarda en storage/certificates.
-     * Retorna la RUTA WEB (con prefijo "storage/") para consistencia con tu código actual.
+     * Genera el DOCX desde la plantilla y lo guarda en storage/app/public/certificates.
+     * Retorna la RUTA WEB "storage/certificates/xxx.docx".
      */
     private static function generateDocx($certificate): ?string
     {
+        // La plantilla ya la tienes en el disco público (correcto):
         $templatePath = storage_path('app/public/courses/' . $certificate->course->id . '/acta_template.docx');
-
         if (!file_exists($templatePath)) {
             \Log::warning("No se encontró la plantilla del acta: {$templatePath}");
             return null;
         }
 
-        $certificatesDir = storage_path('certificates');
-        if (!is_dir($certificatesDir)) {
-            mkdir($certificatesDir, 0775, true);
-        }
+        // Asegurar carpeta destino en el disco 'public'
+        Storage::disk('public')->makeDirectory('certificates');
 
-        $docxAbs = storage_path("certificates/{$certificate->id}_acta.docx");
+        // Ruta absoluta dentro de storage/app/public
+        $docxAbs = Storage::disk('public')->path("certificates/{$certificate->id}_acta.docx");
 
         $template = new TemplateProcessor($templatePath);
 
@@ -67,34 +68,32 @@ class ActaService
         self::processSignatures($template, $config);
 
         $template->saveAs($docxAbs);
-        \Log::info("Acta DOCX generated for certificate {$certificate->id}");
+        \Log::info("Acta DOCX generated (public disk) for certificate {$certificate->id}");
 
-        // devolvemos ruta WEB para mantener compatibilidad con tu flujo
+        // Devolvemos ruta WEB compatible con el symlink "public/storage" → "storage/app/public"
         return "storage/certificates/{$certificate->id}_acta.docx";
     }
 
     /**
-     * Intenta convertir localmente con DocxToPdf (HTML->PDF, barryvdh/domdpdf).
-     * Si algo falla, intenta con ConvertAPI (si CONVERTAPI_SECRET existe).
-     * Retorna la RUTA WEB del PDF.
+     * Convierte a PDF. Guarda en storage/app/public/certificates y retorna la ruta WEB.
      */
     private static function convertToPdf($certificate, string $docxWebPath): ?string
     {
         \Log::info("Starting PDF conversion for certificate {$certificate->id}, DOCX(web): {$docxWebPath}");
 
-        // Obtener ruta ABSOLUTA del DOCX a partir de "storage/..."
-        $relative = str_replace('storage/', '', $docxWebPath); // "certificates/ID_acta.docx"
-        $docxAbs  = storage_path($relative);
-        $pdfAbs   = storage_path("certificates/{$certificate->id}_acta.pdf");
-        $pdfWeb   = "storage/certificates/{$certificate->id}_acta.pdf";
+        // De "storage/certificates/xxx.docx" → relativo en disco 'public'
+        $relative = ltrim(str_replace('storage/', '', $docxWebPath), '/'); // "certificates/ID_acta.docx"
 
-        // Asegurar carpeta destino
-        if (!is_dir(dirname($pdfAbs))) {
-            mkdir(dirname($pdfAbs), 0775, true);
-        }
+        // Rutas absolutas en disco 'public'
+        $docxAbs = Storage::disk('public')->path($relative);
+        $pdfAbs  = Storage::disk('public')->path("certificates/{$certificate->id}_acta.pdf");
+        $pdfWeb  = "storage/certificates/{$certificate->id}_acta.pdf";
+
+        // Asegurar carpeta
+        Storage::disk('public')->makeDirectory('certificates');
 
         try {
-            // 1) Conversión LOCAL (recomendada, 100% PHP)
+            // 1) Conversión LOCAL
             DocxToPdf::convert($docxAbs, $pdfAbs);
 
             // Limpieza opcional del DOCX
@@ -109,7 +108,7 @@ class ActaService
             \Log::error("Local PDF conversion failed for certificate {$certificate->id}: " . $e->getMessage());
         }
 
-        // 2) FALLBACK: ConvertAPI (si tienes la key)
+        // 2) FALLBACK: ConvertAPI (si existe CONVERTAPI_SECRET)
         try {
             $fallback = self::convertWithConvertApi($certificate, $docxWebPath);
             if ($fallback) {
@@ -125,8 +124,7 @@ class ActaService
     }
 
     /**
-     * ConvertAPI (fallback). Requiere CONVERTAPI_SECRET en .env
-     * Devuelve ruta web del PDF en storage/certificates.
+     * ConvertAPI como fallback. Guarda el PDF en storage/app/public/certificates.
      */
     private static function convertWithConvertApi($certificate, string $docxWebPath): ?string
     {
@@ -136,8 +134,9 @@ class ActaService
             return null;
         }
 
-        $relative     = str_replace("storage/", "", $docxWebPath); // "certificates/123_acta.docx"
-        $fullDocxPath = storage_path($relative);
+        // Localiza el DOCX en el disco 'public'
+        $relative     = ltrim(str_replace("storage/", "", $docxWebPath), '/'); // "certificates/123_acta.docx"
+        $fullDocxPath = Storage::disk('public')->path($relative);
 
         if (!file_exists($fullDocxPath)) {
             \Log::error("DOCX file not found: {$fullDocxPath}");
@@ -165,16 +164,16 @@ class ActaService
             }
 
             $fileInfo = $result['Files'][0];
-            $pdfAbs   = storage_path("certificates/{$certificate->id}_acta.pdf");
-            $pdfWeb   = "storage/certificates/{$certificate->id}_acta.pdf";
+
+            // Destinos en el disco 'public'
+            Storage::disk('public')->makeDirectory('certificates');
+            $pdfAbs = Storage::disk('public')->path("certificates/{$certificate->id}_acta.pdf");
+            $pdfWeb = "storage/certificates/{$certificate->id}_acta.pdf";
 
             // Método por URL
             if (!empty($fileInfo['Url'])) {
                 $pdfDownload = Http::timeout(60)->get($fileInfo['Url']);
                 if ($pdfDownload->successful()) {
-                    if (!is_dir(dirname($pdfAbs))) {
-                        mkdir(dirname($pdfAbs), 0775, true);
-                    }
                     file_put_contents($pdfAbs, $pdfDownload->body());
                     \Log::info("PDF saved from ConvertAPI URL for certificate {$certificate->id}");
                     @unlink($fullDocxPath);
@@ -188,9 +187,6 @@ class ActaService
             if (!empty($fileInfo['FileData'])) {
                 $pdfData = base64_decode($fileInfo['FileData']);
                 if ($pdfData !== false && strlen($pdfData) > 0) {
-                    if (!is_dir(dirname($pdfAbs))) {
-                        mkdir(dirname($pdfAbs), 0775, true);
-                    }
                     file_put_contents($pdfAbs, $pdfData);
                     \Log::info("PDF saved from ConvertAPI base64 for certificate {$certificate->id}");
                     @unlink($fullDocxPath);

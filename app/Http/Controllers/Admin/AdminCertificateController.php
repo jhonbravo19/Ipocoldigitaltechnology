@@ -15,7 +15,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Barryvdh\DomPDF\Facade\Pdf;
-
+use App\Services\CertificatePdfService;
 
 class AdminCertificateController extends Controller
 {
@@ -534,17 +534,20 @@ class AdminCertificateController extends Controller
     {
         $certificate->loadMissing(['holder', 'course', 'issuer']);
 
-        try {
-            $certificatePath = \App\Services\CertificateWordService::generate($certificate);
-            if ($certificatePath) {
-                $certificate->certificate_file_path = $certificatePath;
-                \Log::info("Certificate generated successfully: {$certificatePath}");
-            } else {
-                \Log::warning("CertificateWordService returned null for certificate {$certificate->id}");
-            }
-        } catch (\Exception $e) {
-            \Log::error("Error generating certificate for certificate {$certificate->id}: " . $e->getMessage());
-        }
+       try {
+    $certificatePath = \App\Services\CertificatePdfService::generate($certificate, 'a4', 'landscape');
+    if ($certificatePath) {
+        $certificate->certificate_file_path = $certificatePath;
+        \Log::info("Certificate PDF (Blade/DomPDF) generated: {$certificatePath}");
+    } else {
+        \Log::warning("CertificatePdfService returned null for certificate {$certificate->id}");
+    }
+} catch (\Exception $e) {
+    \Log::error("Error generating certificate PDF (Blade/DomPDF) for certificate {$certificate->id}: " . $e->getMessage());
+}
+
+
+
 
         try {
             $cardPath = \App\Services\CardWordService::generate($certificate);

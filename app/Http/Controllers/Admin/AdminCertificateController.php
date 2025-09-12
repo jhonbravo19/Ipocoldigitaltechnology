@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Services\CertificatePdfService;
+use App\Services\CardPdfService;
 
 class AdminCertificateController extends Controller
 {
@@ -550,7 +551,7 @@ class AdminCertificateController extends Controller
 
 
         try {
-            $cardPath = \App\Services\CardWordService::generate($certificate);
+            $cardPath = \App\Services\CardPdfService::generate($certificate);
             if ($cardPath) {
                 $certificate->card_file_path = $cardPath;
                 \Log::info("Card generated successfully: {$cardPath}");
@@ -562,10 +563,12 @@ class AdminCertificateController extends Controller
         }
 
         try {
-            $actaPath = \App\Services\ActaService::generate($certificate);
+            $actaPath = \App\Services\ActaPdfService::generate($certificate);
             if ($actaPath) {
                 $certificate->acta_file_path = $actaPath;
                 \Log::info("Acta generated successfully: {$actaPath}");
+                $certificate->acta_file_path = $actaPath;
+                $certificate->save();
             } else {
                 \Log::warning("ActaService returned null for certificate {$certificate->id}");
             }

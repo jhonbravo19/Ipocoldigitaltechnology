@@ -177,7 +177,7 @@ $year  = $certificate->issue_date?->format('Y') ?? '';
   <tr>
     <!-- Fila 2 -->
     <td class="hdr-left">
-      <div class="formato-txt">formato</div>
+      <div class="subtitle">formato</div>
     </td>
     <td class="hdr-mid">
       <div class="subtitle">PROCESO DE FORMACIÓN CONTINUA</div>
@@ -192,34 +192,63 @@ $year  = $certificate->issue_date?->format('Y') ?? '';
 
 <h1>PROGRAMA: {{ strtoupper($certificate->course->name ?? '—') }}</h1>
 <br>
-<table>
-  <thead>
-    <tr>
-      <th style="width:42px;">ITEM</th>
-      <th>TEMA</th>
-      <th style="width:120px;">INTENSIDAD HORARIA</th>
-      <th>OBJETIVOS</th>
-    </tr>
-  </thead>
-  <tbody>
-    @forelse($modules as $i => $m)
-      <tr>
-        <td class="c">{{ $i+1 }}</td>
-        <td>{{ $m['tema'] ?? '' }}</td>
-        <td class="c">{{ $m['horas'] ?? '' }} horas</td>
-        <td>{!! $m['objetivo'] ?? '' !!}</td>
-      </tr>
-    @empty
-      {{-- Fila ejemplo si no hay módulos cargados --}}
-      <tr>
-        <td class="c">1</td>
-        <td>Información importante sobre seguridad</td>
-        <td class="c"> {{ $duration_hours }} {{ $duration_hours === 1 ? 'hora' : 'horas' }}</td>
-        <td>Dar la importancia de las etiquetas y avisos de advertencia.</td>
-      </tr>
-    @endforelse
-  </tbody>
-</table>
+<p>
+  El día <b>{{ $certificate->issue_date
+      ? $certificate->issue_date->locale('es')->isoFormat('DD [de] MMMM [de] YYYY')
+      : '___ de ________ de ____' }}</b>, se llevó a cabo el curso de
+  <b>{{ strtoupper($certificate->course->name ?? '_______________________________') }}</b>.
+</p>
+<div style="text-align:center; margin:12px 0 4px;">
+  <div style="
+    display:inline-block;
+    padding:10px 22px;
+    border:2.5px solid #2f59ff;   /* color del borde */
+    border-radius:20mm;            /* hace el efecto de óvalo */
+    min-width:95mm;                /* ancho mínimo para que se vea como en el ejemplo */
+  ">
+    <div style="font-size:12pt; font-weight:700; text-transform:uppercase; letter-spacing:.2px;">
+      {{ strtoupper(trim(($certificate->holder->first_names ?? '').' '.($certificate->holder->last_names ?? ''))) }}
+    </div>
+    <div style="font-size:11pt; margin-top:2px;">
+      {{ strtoupper(($certificate->holder->identification_type ?? 'CC')) }}
+      {{ $certificate->holder->identification_number ?? '' }}
+    </div>
+  </div>
+</div>
+
+@php
+  // Intensidad horaria
+  $hours = (int)($course->duration_hours ?? 0);
+  $hoursTxt = $hours > 0 ? ($hours.' '.($hours === 1 ? 'hora' : 'horas')) : '______________';
+
+  // Fecha larga en español (fallback con guiones)
+  $dateFull = $certificate->issue_date
+      ? $certificate->issue_date->locale('es')->isoFormat('DD [de] MMMM [de] YYYY')
+      : '____ de __________ de __________';
+@endphp
+
+<p>
+  El curso <b>{{ strtoupper($courseName) }}</b>, con una intensidad horaria de
+  <b>{{ $hoursTxt }}</b>.
+</p>
+
+<p><b>Objetivo General:</b>
+  <br>
+  <br>
+  Capacitar a los participantes para adquirir, fortalecer y demostrar competencias teóricas y prácticas
+  que les permitan desempeñarse de manera eficiente, segura y responsable en el área de formación
+  correspondiente, aplicando los conocimientos y habilidades adquiridas en contextos reales, para
+  contribuir al desarrollo personal, profesional y organizacional.
+</p>
+
+<p>
+  Se firma la presente <b>acta</b> en señal de conformidad por parte de los asistentes.
+</p>
+
+<p>
+  Dado el día <b>{{ $dateFull }}</b>.
+</p>
+
 <br>
 {{-- FIRMAS --}}
 
@@ -263,17 +292,6 @@ $year  = $certificate->issue_date?->format('Y') ?? '';
     </td>
   </tr>
 </table>
-
-
-
-
-<footer>
-  Líneas de atención: {{ $config->contact_phones ?? '3212350409 / 3045596357 / 3003860786 / 32332895704 / 6014725928' }}<br>
-  Dirección: {{ $config->address ?? 'Cra 16 No 58 - 29, Barrio San Luis, Teusaquillo, Bogotá' }}<br>
-  Consulte su certificado en <a href="{{ $config->validation_url ?? 'https://inspeccionesindustrialesdecolombia.com' }}">
-    {{ $config->validation_url ?? 'https://inspeccionesindustrialesdecolombia.com' }}
-  </a>
-</footer>
 
 </body>
 </html>

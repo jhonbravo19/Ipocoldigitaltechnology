@@ -82,7 +82,6 @@ class AdminCertificateController extends Controller
                     ->get()
                     ->each->syncStatus();
 
-
                 $result = Certificate::canIssueNew($holder->id, $request->course_id);
 
                 if (!$result['allowed']) {
@@ -107,21 +106,17 @@ class AdminCertificateController extends Controller
                     ]);
                 }
 
-
-
                 $this->generateCertificatePDFs($certificate);
             });
 
             return redirect()->route('admin.certificates.show', $certificate)
                 ->with('success', 'Certificado creado exitosamente.');
-
         } catch (\Exception $e) {
             return back()
                 ->withErrors(['error' => 'Error al crear el certificado: ' . $e->getMessage()])
                 ->withInput();
         }
     }
-
 
     public function show(Certificate $certificate)
     {
@@ -144,6 +139,7 @@ class AdminCertificateController extends Controller
             'holderCertificates'
         ));
     }
+
     public function edit(Certificate $certificate)
     {
         $certificate->loadMissing(['holder', 'course']);
@@ -158,6 +154,7 @@ class AdminCertificateController extends Controller
             'bloodTypes'
         ));
     }
+
     public function update(UpdateCertificateRequest $request, Certificate $certificate)
     {
         try {
@@ -190,7 +187,6 @@ class AdminCertificateController extends Controller
 
             return redirect()->route('admin.certificates.show', $certificate)
                 ->with('success', 'Certificado actualizado exitosamente.');
-
         } catch (\Exception $e) {
             return back()
                 ->withErrors(['error' => 'Error al actualizar: ' . $e->getMessage()])
@@ -209,7 +205,6 @@ class AdminCertificateController extends Controller
 
             return redirect()->route('admin.certificates.index')
                 ->with('success', 'Certificado eliminado exitosamente.');
-
         } catch (\Exception $e) {
             return back()->withErrors(['error' => 'Error al eliminar: ' . $e->getMessage()]);
         }
@@ -234,12 +229,10 @@ class AdminCertificateController extends Controller
 
             return redirect()->route('admin.certificates.show', $certificate)
                 ->with('success', "El certificado ha sido {$statusLabel} correctamente.");
-
         } catch (\Exception $e) {
             return back()->withErrors(['error' => 'Error al cambiar el estado: ' . $e->getMessage()]);
         }
     }
-
 
     public function regeneratePDFs(Certificate $certificate)
     {
@@ -287,7 +280,6 @@ class AdminCertificateController extends Controller
             }
 
             return back()->with('success', $message);
-
         } catch (\Exception $e) {
             return back()->withErrors(['error' => 'Error en la operación masiva: ' . $e->getMessage()]);
         }
@@ -349,7 +341,6 @@ class AdminCertificateController extends Controller
                 'holder' => $holderInfo,
                 'certificates' => $activeCertificates
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -376,7 +367,6 @@ class AdminCertificateController extends Controller
                     ? 'Esta persona ya tiene un certificado activo para este curso.'
                     : 'Esta persona puede recibir un certificado para este curso.'
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -415,7 +405,6 @@ class AdminCertificateController extends Controller
                     ? 'Ya existe una persona con esa identificación.'
                     : 'Identificación disponible.'
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -469,7 +458,7 @@ class AdminCertificateController extends Controller
         $holderData['first_names'] = strtoupper($holderData['first_names'] ?? '');
         $holderData['last_names'] = strtoupper($holderData['last_names'] ?? '');
         $holderData['identification_place'] = strtoupper($holderData['identification_place'] ?? '');
-        
+
         if (($holderData['has_drivers_license'] ?? 'NO') === 'NO') {
             $holderData['drivers_license_category'] = null;
         }
@@ -535,47 +524,60 @@ class AdminCertificateController extends Controller
     {
         $certificate->loadMissing(['holder', 'course', 'issuer']);
 
-       try {
-    $certificatePath = \App\Services\CertificatePdfService::generate($certificate, 'a4', 'landscape');
-    if ($certificatePath) {
-        $certificate->certificate_file_path = $certificatePath;
-        \Log::info("Certificate PDF (Blade/DomPDF) generated: {$certificatePath}");
-    } else {
-        \Log::warning("CertificatePdfService returned null for certificate {$certificate->id}");
-    }
-} catch (\Exception $e) {
-    \Log::error("Error generating certificate PDF (Blade/DomPDF) for certificate {$certificate->id}: " . $e->getMessage());
-}
+        // Mitigar fallos por memoria/carpeta temporal en DomPDF
+        @ini_set('memory_limit', '512M');
+        if (!is_dir(storage_path('app/dompdf'))) {
+            @mkdir(storage_path('app/dompdf'), 0775, true);
+        }
 
+        // ---- CERTIFICADO ----
+        try {
+            // Asegúrate de que el Service use Storage::disk('public')->put(...)
+            $certificatePath = \App\Services\CertificatePdfService::generate($certificate, 'a4', 'landscape');
+            if ($certificatePath) {
+                $certificate->certificate_file_path = $certificatePath; // "certificates/ID_certificado.pdf"
+                \Log::info("Certificate PDF generated OK: {$certificatePath}");
+            } else {
+                \Log::warning("CertificatePdfService returned null for certificate {$certificate->id}");
+            }
+        } catch (\Exception $e) {
+            \Log::error("Error generating certificate PDF for certificate {$certificate->id}: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
 
-
-
+        // ---- CARD ----
         try {
             $cardPath = \App\Services\CardPdfService::generate($certificate);
             if ($cardPath) {
                 $certificate->card_file_path = $cardPath;
                 \Log::info("Card generated successfully: {$cardPath}");
             } else {
-                \Log::warning("CardWordService returned null for certificate {$certificate->id}");
+                \Log::warning("CardPdfService returned null for certificate {$certificate->id}");
             }
         } catch (\Exception $e) {
-            \Log::error("Error generating card for certificate {$certificate->id}: " . $e->getMessage());
+            \Log::error("Error generating card for certificate {$certificate->id}: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
 
+        // ---- ACTA ----
         try {
             $actaPath = \App\Services\ActaPdfService::generate($certificate);
             if ($actaPath) {
                 $certificate->acta_file_path = $actaPath;
                 \Log::info("Acta generated successfully: {$actaPath}");
-                $certificate->acta_file_path = $actaPath;
-                $certificate->save();
             } else {
-                \Log::warning("ActaService returned null for certificate {$certificate->id}");
+                \Log::warning("ActaPdfService returned null for certificate {$certificate->id}");
             }
+            // No guardamos aún; se guarda al final.
         } catch (\Exception $e) {
-            \Log::error("Error generating acta for certificate {$certificate->id}: " . $e->getMessage());
+            \Log::error("Error generating acta for certificate {$certificate->id}: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
 
+        // ---- PAQUETE ----
         try {
             $paquetePath = \App\Services\FullPackageService::generate($certificate);
             if ($paquetePath) {
@@ -585,11 +587,13 @@ class AdminCertificateController extends Controller
                 \Log::warning("FullPackageService returned null for certificate {$certificate->id}");
             }
         } catch (\Exception $e) {
-            \Log::error("Error generating package for certificate {$certificate->id}: " . $e->getMessage());
+            \Log::error("Error generating package for certificate {$certificate->id}: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
 
+        // ---- SAVE ONCE ----
         $saved = $certificate->save();
-
         if (!$saved) {
             \Log::error("Failed to save certificate {$certificate->id} with file paths");
             throw new \Exception("Failed to save certificate with file paths");

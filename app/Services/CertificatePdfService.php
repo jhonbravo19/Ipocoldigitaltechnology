@@ -5,16 +5,16 @@ namespace App\Services;
 use App\Models\Certificate;
 use App\Models\CertificateTemplateConfig;
 use Barryvdh\DomPDF\Facade\Pdf;
-use Illuminate\Support\Facades\View;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class CertificatePdfService
 {
     /**
-     * Genera el PDF del certificado y devuelve una RUTA WEB tipo:
-     *   storage/certificates/{id}_certificate.pdf
-     * Esto se sirve vía el symlink /public/storage (php artisan storage:link)
+     * Genera el PDF del certificado, lo guarda en storage/app/public/certificates
+     * (servible por /storage/...) y guarda la ruta web en certificate_file_path.
+     *
+     * @return string|null  Ruta web tipo "storage/certificates/{id}_certificate.pdf"
      */
     public static function generate(
         Certificate $certificate,
@@ -24,107 +24,119 @@ class CertificatePdfService
         @ini_set('memory_limit', '512M');
         @set_time_limit(60);
 
-        $config = CertificateTemplateConfig::getActiveConfig();
+        try {
+            // 1) Cargar relaciones y config
+            $certificate->loadMissing(['course', 'holder']);
+            $config = CertificateTemplateConfig::getActiveConfig();
 
-        // ===== 1) Render del Blade a HTML =====
-        // Usa la vista "bonita" por defecto; si aún estás ajustando fondo,
-        // puedes cambiar temporalmente a 'pdfs.certificate_plain'
-        $html = View::make('pdfs.certificate_plain', [
-            'certificate' => $certificate,
-            'config'      => $config,
-        ])->render();
+            // 2) Asegurar carpeta pública
+            Storage::disk('public')->makeDirectory('certificates');
 
-        // Carpeta de depuración (privada, solo para ver los .html)
-        $debugDir = storage_path('certificates');
-        if (!is_dir($debugDir)) {
-            mkdir($debugDir, 0775, true);
-        }
-        file_put_contents($debugDir.'/_debug_certificate.html', $html);
-        Log::info("[CERT PDF] HTML debug guardado (".strlen($html)." bytes)");
-
-        // Helper para generar bytes de PDF desde HTML
-        $makePdf = function (string $htmlStr) use ($paper, $orientation) {
-            $pdf = Pdf::loadHTML($htmlStr)
+            // 3) Intento principal: render de la vista oficial
+            $pdf = Pdf::loadView('pdfs.certificate_plain', [
+                    'certificate' => $certificate,
+                    'config'      => $config,
+                ])
                 ->setOptions([
                     'isHtml5ParserEnabled' => true,
-                    'isRemoteEnabled'      => true,
+                    'isRemoteEnabled'      => true,          // permite http/https en <img>
+                    'chroot'               => public_path(), // permite leer public_path(...)
                     'dpi'                  => 110,
                     'defaultFont'          => 'DejaVu Sans',
                 ])
-                ->setPaper($paper, $orientation)
-                ->setWarnings(true);
+                ->setPaper($paper, $orientation);
 
-            return $pdf->output(); // string (bytes) o excepción
-        };
+            $rel = "certificates/{$certificate->id}_certificate.pdf";        // relativo al disk 'public'
+            $abs = Storage::disk('public')->path($rel);                      // ruta absoluta
+            $pdf->save($abs);
 
-        $bytes = null;
+            $ok   = Storage::disk('public')->exists($rel);
+            $size = $ok ? (Storage::disk('public')->size($rel) ?: 0) : 0;
 
-        // ===== 2) Intento normal =====
-        try {
-            $bytes = $makePdf($html);
-            Log::info("[CERT PDF] intento 1 (normal) bytes=".(is_string($bytes) ? strlen($bytes) : 0));
+            Log::info("[CERT PDF] Guardado (v1) {$rel} ({$size} bytes)");
+
+            // 4) Fallback si guarda vacío (suele indicar problema en la vista/CSS/recursos)
+            if (!$ok || $size < 500) {
+                Log::warning("[CERT PDF] Fallback simple por bytes insuficientes en {$rel}");
+
+                $htmlFallback = self::fallbackHtml($certificate);
+                $pdf2 = Pdf::loadHTML($htmlFallback)
+                    ->setOptions([
+                        'isHtml5ParserEnabled' => true,
+                        'isRemoteEnabled'      => false,
+                        'chroot'               => public_path(),
+                        'dpi'                  => 110,
+                        'defaultFont'          => 'DejaVu Sans',
+                    ])
+                    ->setPaper($paper, $orientation);
+
+                $pdf2->save($abs);
+
+                $ok   = Storage::disk('public')->exists($rel);
+                $size = $ok ? (Storage::disk('public')->size($rel) ?: 0) : 0;
+                Log::info("[CERT PDF] Guardado (fallback) {$rel} ({$size} bytes)");
+
+                if (!$ok || $size < 300) {
+                    Log::error("[CERT PDF] Archivo vacío tras fallback: {$rel}");
+                    return null;
+                }
+            }
+
+            // 5) Persistir ruta web en la BD y devolverla
+            $web = "storage/{$rel}";
+            $certificate->certificate_file_path = $web;
+            $certificate->save();
+
+            Log::info("[CERT PDF] OK → {$web} (cert_id={$certificate->id})");
+
+            return $web;
         } catch (\Throwable $e) {
-            Log::error("[CERT PDF] intento 1 falló: ".$e->getMessage());
-        }
-
-        // ===== 3) Reintento: sin fondo (elimina <img class="bg">) =====
-        if (!is_string($bytes) || strlen($bytes) === 0) {
-            $htmlNoBg = preg_replace('/<img[^>]*class="[^"]*\bbg\b[^"]*"[^>]*>/i', '', $html) ?? $html;
-            file_put_contents($debugDir.'/_debug_certificate_no_bg.html', $htmlNoBg);
-            try {
-                $bytes = $makePdf($htmlNoBg);
-                Log::info("[CERT PDF] intento 2 (sin fondo) bytes=".(is_string($bytes) ? strlen($bytes) : 0));
-            } catch (\Throwable $e) {
-                Log::error("[CERT PDF] intento 2 falló: ".$e->getMessage());
-            }
-        }
-
-        // ===== 4) Reintento: sin ninguna imagen =====
-        if (!is_string($bytes) || strlen($bytes) === 0) {
-            $htmlNoImgs = preg_replace('/<img[^>]*>/i', '', $html) ?? $html;
-            file_put_contents($debugDir.'/_debug_certificate_no_imgs.html', $htmlNoImgs);
-            try {
-                $bytes = $makePdf($htmlNoImgs);
-                Log::info("[CERT PDF] intento 3 (sin imgs) bytes=".(is_string($bytes) ? strlen($bytes) : 0));
-            } catch (\Throwable $e) {
-                Log::error("[CERT PDF] intento 3 falló: ".$e->getMessage());
-            }
-        }
-
-        // ===== 5) Último fallback: HTML ultra simple =====
-        if (!is_string($bytes) || strlen($bytes) === 0) {
-            $plain = '<html><head><meta charset="utf-8"></head><body>'.
-                     '<h1 style="text-align:center">Certificado</h1>'.
-                     '<p>ID: '.e($certificate->id).'</p>'.
-                     '<p>Alumno: '.e(optional($certificate->holder)->first_names).' '.
-                                  e(optional($certificate->holder)->last_names).'</p>'.
-                     '<p>Curso: '.e(optional($certificate->course)->name).'</p>'.
-                     '<p>Emitido: '.e(optional($certificate->issue_date)->format("d/m/Y")).'</p>'.
-                     '</body></html>';
-            file_put_contents($debugDir.'/_debug_certificate_plain.html', $plain);
-            try {
-                $bytes = $makePdf($plain);
-                Log::info("[CERT PDF] intento 4 (plain) bytes=".(is_string($bytes) ? strlen($bytes) : 0));
-            } catch (\Throwable $e) {
-                Log::error("[CERT PDF] intento 4 falló: ".$e->getMessage());
-                return null;
-            }
-        }
-
-        if (!is_string($bytes) || strlen($bytes) === 0) {
-            Log::error("[CERT PDF] No se obtuvieron bytes de PDF en ningún intento.");
+            Log::error("[CERT PDF] ERROR: {$e->getMessage()} @{$e->getFile()}:{$e->getLine()}");
             return null;
         }
+    }
 
-        // ===== 6) Guardar en DISK 'public' y devolver RUTA WEB =====
-        // Se servirá como /storage/certificates/ID_certificate.pdf
-        $rel = "certificates/{$certificate->id}_certificate.pdf"; // dentro de storage/app/public
-        Storage::disk('public')->put($rel, $bytes);
+    /**
+     * HTML mínimo de respaldo (sin imágenes ni CSS externos).
+     */   
+    protected static function fallbackHtml(Certificate $c): string
+    {
+        $id      = e($c->id);
+        $alumno  = e(optional($c->holder)->full_name ?? optional($c->holder)->first_names.' '.optional($c->holder)->last_names);
+        $curso   = e(optional($c->course)->name ?? 'Curso');
+        $emitido = e(optional($c->issue_date)->format('Y-m-d') ?? now()->format('Y-m-d'));
 
-        $size = Storage::disk('public')->size($rel) ?: 0;
-        Log::info("[CERT PDF] escrito en disk 'public': {$rel} ({$size} bytes)");
-
-        // Muy importante: devolver con prefijo "storage/" para que asset() funcione
-        return "storage/{$rel}";
+        return <<<HTML
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { margin: 24px; }
+  body { font-family: DejaVu Sans, sans-serif; font-size: 12px; color:#111; }
+  h1   { font-size: 20px; text-align:center; margin: 0 0 8px; }
+  .box { border:1px solid #bbb; border-radius:6px; padding:12px; margin-top:10px; }
+  .row { display: table; width:100%; }
+  .col { display: table-cell; width:50%; vertical-align: top; }
+  .muted { color:#666; }
+</style>
+</head>
+<body>
+  <h1>Certificado #{$id}</h1>
+  <div class="row">
+    <div class="col">
+      <div class="box">
+        <b>Titular:</b> {$alumno}<br>
+        <b>Curso:</b> {$curso}<br>
+        <b>Emitido:</b> {$emitido}
+      </div>
+    </div>
+    <div class="col" style="text-align:right">
+      <div class="muted">Vista simple de respaldo</div>
+    </div>
+  </div>
+</body>
+</html>
+HTML;
     }
 }
